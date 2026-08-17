@@ -210,13 +210,19 @@ def _read_options(raw: Any) -> tuple[list[str], dict[str, str]]:
     return options, labels
 
 
-def _is_visible(widget: DictionaryObject) -> bool:
-    raw = widget.get("/F")
+def _read_int(raw: Any) -> int | None:
+    """Read a PDF number, tolerating the malformed values found in the wild."""
     if raw is None:
-        return True
+        return None
     try:
-        flags = int(raw.get_object())
+        return int(raw.get_object() if hasattr(raw, "get_object") else raw)
     except (TypeError, ValueError):
+        return None
+
+
+def _is_visible(widget: DictionaryObject) -> bool:
+    flags = _read_int(widget.get("/F"))
+    if flags is None:
         return True
     return not (flags & (ANNOT_HIDDEN | ANNOT_NOVIEW))
 
@@ -302,14 +308,7 @@ def _walk(
     else:
         widget_refs = []
 
-    try:
-        flags = (
-            int(attrs.get("/Ff", 0).get_object())
-            if hasattr(attrs.get("/Ff", 0), "get_object")
-            else int(attrs.get("/Ff", 0))
-        )
-    except (TypeError, ValueError):
-        flags = 0
+    flags = _read_int(attrs.get("/Ff")) or 0
     kind = _resolve_kind(_name(attrs.get("/FT")), flags)
     if kind is FieldKind.UNKNOWN and not name:
         return
@@ -343,7 +342,7 @@ def _walk(
             default_value=_read_value(attrs.get("/DV")),
             options=options,
             option_labels=labels,
-            max_length=int(max_len.get_object()) if max_len is not None else None,
+            max_length=_read_int(max_len),
             tooltip=str(tooltip.get_object()) if tooltip is not None else None,
         )
     )

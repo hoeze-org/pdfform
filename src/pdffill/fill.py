@@ -88,7 +88,7 @@ def _as_text(value: Any, field: FormField, strict: bool) -> str:
     if isinstance(value, bool):
         text = "Yes" if value else "No"
     elif isinstance(value, (int, float)):
-        text = repr(value) if isinstance(value, float) else str(value)
+        text = str(value)
     elif isinstance(value, str):
         text = value
     else:
