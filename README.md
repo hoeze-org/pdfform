@@ -18,14 +18,16 @@ There is no single library that reads an AcroForm, describes it as a schema, and
 Requires Python >= 3.12.
 
 ```bash
-pip install pdffill
+pip install git+ssh://git@github.com/hoeze-minion/pdffill.git
 ```
 
-Add the `validate` extra to pull in `jsonschema` for validating data against a derived schema:
+Add the `validate` extra to pull in `jsonschema`, which the `validate` command and `--validate` need:
 
 ```bash
-pip install 'pdffill[validate]'
+pip install 'pdffill[validate] @ git+ssh://git@github.com/hoeze-minion/pdffill.git'
 ```
+
+From a checkout, `uv sync --all-groups --all-extras` sets everything up; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Command line
 
