@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pdffill"
-version = "0.1.0"
+version = "0.2.0"
 description = "Derive a JSON Schema from a PDF form and fill it from the command line or as a library"
 authors = [
     { name = "Florian R. Hölzlwimmer", email = "hoeze-minion@users.noreply.github.com" },
