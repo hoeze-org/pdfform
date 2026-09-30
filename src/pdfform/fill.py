@@ -29,9 +29,9 @@ from pypdf.generic import (
     TextStringObject,
 )
 
-from pdffill.extract import extract_form_and_objects, open_reader
-from pdffill.flatten import flatten_widgets
-from pdffill.model import (
+from pdfform.extract import extract_form_and_objects, open_reader
+from pdfform.flatten import flatten_widgets
+from pdfform.model import (
     OFF_STATE,
     DynamicXfaError,
     FieldKind,
@@ -41,7 +41,7 @@ from pdffill.model import (
     UnknownFieldError,
     XfaKind,
 )
-from pdffill.xfa import strip_xfa as _strip_xfa
+from pdfform.xfa import strip_xfa as _strip_xfa
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ FALSE_WORDS = {"false", "no", "n", "off", "0", "nein", "unchecked", "falsch", ""
 def flatten_values(values: Any, prefix: str = "") -> dict[str, Any]:
     """Flatten a nested mapping into dot-separated keys.
 
-    Accepts the output of ``pdffill schema --nested`` as readily as the flat
+    Accepts the output of ``pdfform schema --nested`` as readily as the flat
     form. Lists are values, not structure, so they are left alone.
     """
     out: dict[str, Any] = {}

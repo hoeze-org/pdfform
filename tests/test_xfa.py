@@ -6,8 +6,8 @@ from formbuilder import read
 from pypdf import PdfWriter
 from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, NameObject, TextStringObject
 
-from pdffill import detect_xfa, extract_form, get_acroform, open_pdf, strip_xfa, strip_xfa_layer, xfa_packets
-from pdffill.model import XfaKind
+from pdfform import detect_xfa, extract_form, get_acroform, open_pdf, strip_xfa, strip_xfa_layer, xfa_packets
+from pdfform.model import XfaKind
 
 
 def acroform_of(data: bytes) -> DictionaryObject:

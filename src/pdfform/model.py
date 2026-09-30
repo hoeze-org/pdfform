@@ -222,7 +222,7 @@ class FormInfo:
 
 
 class PdfFormError(Exception):
-    """Base class for every error raised by :mod:`pdffill`."""
+    """Base class for every error raised by :mod:`pdfform`."""
 
 
 class DynamicXfaError(PdfFormError):

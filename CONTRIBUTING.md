@@ -1,4 +1,4 @@
-# Contributing to `pdffill`
+# Contributing to `pdfform`
 
 ## Development environment
 
@@ -9,10 +9,10 @@ The project uses [`uv`](https://docs.astral.sh/uv/) for dependency management.
 ```bash
 # Create the conda env (provides Python + uv)
 micromamba env create -f environment-dev.yml
-micromamba activate pdffill
+micromamba activate pdfform
 
 # Install all dependency groups (runtime + dev + test + lint) into a uv-managed venv
-uv sync --all-groups --all-extras
+uv sync --all-groups
 ```
 
 All subsequent commands assume the env is activated and `uv` is on `PATH`.
@@ -31,7 +31,7 @@ Available environments (defined in `pyproject.toml`):
 |-----------------|------------------------------------------|
 | `format-check`  | `ruff format --check .`                  |
 | `lints`         | `ruff check .`                           |
-| `typecheck`     | `mypy src/pdffill`                       |
+| `typecheck`     | `mypy src/pdfform`                       |
 | `py3.12`        | Run pytest under Python 3.12             |
 | `py3.14`        | Run pytest under Python 3.14             |
 

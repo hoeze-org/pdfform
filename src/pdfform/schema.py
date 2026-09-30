@@ -25,13 +25,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from pdffill.model import (
+import jsonschema
+
+from pdfform.model import (
     OFF_STATE,
     DynamicXfaError,
     FieldKind,
     FormField,
     FormInfo,
-    PdfFormError,
     XfaKind,
 )
 
@@ -174,7 +175,7 @@ def build_schema(
         nested: Split dot-separated field names into nested objects.
         include_read_only: Also emit read-only fields. They are described but
             cannot be filled.
-        include_signatures: Also emit signature fields. ``pdffill`` cannot sign,
+        include_signatures: Also emit signature fields. ``pdfform`` cannot sign,
             so they are left out unless asked for.
         title: Overrides the schema title.
 
@@ -185,7 +186,7 @@ def build_schema(
         raise DynamicXfaError(
             "This is a dynamic XFA form: the AcroForm is an empty stub and the real "
             "form is script-generated XML, so it has no fixed field list. Inspect the "
-            "XFA template packet with `pdffill xfa --packet template` instead."
+            "XFA template packet with `pdfform xfa --packet template` instead."
         )
 
     properties: dict[str, Any] = {}
@@ -233,8 +234,8 @@ def current_values(
     """Return the values currently stored in the form, keyed by field name.
 
     The defaults match :func:`build_schema`, so the result validates against the
-    derived schema. That is what makes ``pdffill values`` a usable starting point
-    for ``pdffill fill``.
+    derived schema. That is what makes ``pdfform values`` a usable starting point
+    for ``pdfform fill``.
     """
     out: dict[str, Any] = {}
     for field in info.fields:
@@ -263,22 +264,14 @@ def validate_values(schema: dict[str, Any], values: dict[str, Any]) -> list[str]
     instruction rather than a value.
 
     Note that filling itself is deliberately more permissive than the schema.
-    ``pdffill fill`` accepts ``"yes"`` for a check box, an option's display label
+    ``pdfform fill`` accepts ``"yes"`` for a check box, an option's display label
     instead of its export value, and an unambiguous partial field name. Use this
     when the data is meant to be schema-clean, not as a precondition for filling.
 
     Returns:
         Human-readable messages, most significant first. An empty list means the
         values validate.
-
-    Raises:
-        PdfFormError: If ``jsonschema`` is not installed.
     """
-    try:
-        import jsonschema
-    except ModuleNotFoundError as exc:  # pragma: no cover - depends on the install
-        raise PdfFormError("Validation needs jsonschema. Install it with: pip install 'pdffill[validate]'") from exc
-
     instance = {key: value for key, value in values.items() if value is not None}
     validator = jsonschema.Draft202012Validator(schema)
     errors = sorted(validator.iter_errors(instance), key=lambda e: list(e.absolute_path))
@@ -290,7 +283,7 @@ def _empty_for(field: FormField) -> Any:
 
     A radio group or a dropdown with nothing selected becomes ``null`` rather
     than ``""``, because the empty string is not one of its options and would
-    make the template fail its own schema. :func:`~pdffill.fill.fill_form`
+    make the template fail its own schema. :func:`~pdfform.fill.fill_form`
     reads ``null`` as "clear this field".
     """
     if field.kind is FieldKind.CHECKBOX:

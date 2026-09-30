@@ -1,4 +1,4 @@
-"""Command line interface for :mod:`pdffill`."""
+"""Command line interface for :mod:`pdfform`."""
 
 from __future__ import annotations
 
@@ -10,13 +10,13 @@ from typing import Any
 
 import click
 
-from pdffill.extract import extract_form, get_acroform, open_pdf
-from pdffill.fill import fill_form, flatten_values, strip_xfa_layer
-from pdffill.model import OFF_STATE, FieldKind, FormInfo, PdfFormError, XfaKind
-from pdffill.schema import build_schema, current_values, validate_values
-from pdffill.xfa import xfa_packets
+from pdfform.extract import extract_form, get_acroform, open_pdf
+from pdfform.fill import fill_form, flatten_values, strip_xfa_layer
+from pdfform.model import OFF_STATE, FieldKind, FormInfo, PdfFormError, XfaKind
+from pdfform.schema import build_schema, current_values, validate_values
+from pdfform.xfa import xfa_packets
 
-logger = logging.getLogger("pdffill")
+logger = logging.getLogger("pdfform")
 
 PDF_ARG = click.Path(exists=True, dir_okay=False, readable=True, path_type=Path)
 OUT_OPT = click.Path(dir_okay=False, writable=True, path_type=Path)
@@ -40,7 +40,7 @@ def _warn_xfa(info: FormInfo) -> None:
     if info.xfa is XfaKind.HYBRID:
         click.echo(
             "warning: this form carries a static XFA layer. Acrobat may prefer the XFA "
-            "data over the values written here; `pdffill fill` drops that layer by default.",
+            "data over the values written here; `pdfform fill` drops that layer by default.",
             err=True,
         )
 
@@ -62,17 +62,17 @@ class _Group(click.Group):
 
 
 @click.group(cls=_Group, context_settings={"help_option_names": ["-h", "--help"]})
-@click.version_option(package_name="pdffill")
+@click.version_option(package_name="pdfform")
 @click.option("-v", "--verbose", count=True, help="Increase log verbosity. Repeatable.")
 def main_cli(verbose: int) -> None:
     """Inspect, describe and fill PDF forms.
 
     \b
     Typical session:
-      pdffill fields form.pdf                     # see what is in there
-      pdffill schema form.pdf -o schema.json      # derive a JSON Schema
-      pdffill values form.pdf -o data.json        # start from the current values
-      pdffill fill form.pdf -d data.json -o out.pdf
+      pdfform fields form.pdf                     # see what is in there
+      pdfform schema form.pdf -o schema.json      # derive a JSON Schema
+      pdfform values form.pdf -o data.json        # start from the current values
+      pdfform fill form.pdf -d data.json -o out.pdf
     """
     _configure_logging(verbose)
 
@@ -187,7 +187,7 @@ def _clip(text: str, width: int) -> str:
 def values(pdf: Path, output: Path | None, include_empty: bool, include_read_only: bool, indent: int) -> None:
     """Dump the values currently stored in PDF as JSON.
 
-    The result is accepted by `pdffill fill`, so this is the quickest way to get
+    The result is accepted by `pdfform fill`, so this is the quickest way to get
     a template to edit.
     """
     info = extract_form(pdf)
@@ -240,9 +240,9 @@ def fill(
 
     \b
     Values come from a JSON file, from --set, or both; --set wins.
-      pdffill fill form.pdf --set Name=Doe --set Agreed=true -o out.pdf
-      pdffill fill form.pdf -d values.json -o out.pdf
-      cat values.json | pdffill fill form.pdf -d - -o out.pdf
+      pdfform fill form.pdf --set Name=Doe --set Agreed=true -o out.pdf
+      pdfform fill form.pdf -d values.json -o out.pdf
+      cat values.json | pdfform fill form.pdf -d - -o out.pdf
     """
     payload: dict[str, Any] = _load_values(data) if data is not None else {}
     for assignment in assignments:

@@ -454,17 +454,13 @@ wheels = [
 ]
 
 [[package]]
-name = "pdffill"
+name = "pdfform"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
-    { name = "pypdf" },
-]
-
-[package.optional-dependencies]
-validate = [
     { name = "jsonschema" },
+    { name = "pypdf" },
 ]
 
 [package.dev-dependencies]
@@ -477,7 +473,6 @@ lint = [
     { name = "ruff" },
 ]
 test = [
-    { name = "jsonschema" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-mock" },
@@ -488,10 +483,9 @@ test = [
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
-    { name = "jsonschema", marker = "extra == 'validate'", specifier = ">=4.21" },
+    { name = "jsonschema", specifier = ">=4.21" },
     { name = "pypdf", specifier = ">=5.1" },
 ]
-provides-extras = ["validate"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -503,7 +497,6 @@ lint = [
     { name = "ruff" },
 ]
 test = [
-    { name = "jsonschema", specifier = ">=4.21" },
     { name = "pytest", specifier = ">=8,<9" },
     { name = "pytest-cov" },
     { name = "pytest-mock" },

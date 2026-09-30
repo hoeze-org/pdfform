@@ -206,10 +206,10 @@ def flatten_widgets(writer: PdfWriter, *, remove_form: bool = True) -> int:
             if xobjects is None:
                 xobjects = _page_xobjects(page)
 
-            name = NameObject(f"/PdffillFm{counter}")
+            name = NameObject(f"/PdfformFm{counter}")
             while name in xobjects:
                 counter += 1
-                name = NameObject(f"/PdffillFm{counter}")
+                name = NameObject(f"/PdfformFm{counter}")
             xobjects[name] = _reference(writer, stream)
             counter += 1
 

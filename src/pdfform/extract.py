@@ -24,7 +24,7 @@ from typing import Any, cast
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import ArrayObject, DictionaryObject, IndirectObject, StreamObject
 
-from pdffill.model import (
+from pdfform.model import (
     FF_PUSHBUTTON,
     FF_RADIO,
     OFF_STATE,
@@ -33,7 +33,7 @@ from pdffill.model import (
     FormInfo,
     Widget,
 )
-from pdffill.xfa import detect_xfa
+from pdfform.xfa import detect_xfa
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +167,7 @@ def _resolve_kind(field_type: str | None, flags: int) -> FieldKind:
     if field_type == "Tx":
         return FieldKind.TEXT
     if field_type == "Ch":
-        from pdffill.model import FF_COMBO
+        from pdfform.model import FF_COMBO
 
         return FieldKind.DROPDOWN if flags & FF_COMBO else FieldKind.LISTBOX
     if field_type == "Sig":
@@ -368,7 +368,7 @@ def extract_form(source: Any, *, infer_labels: bool = False) -> FormInfo:
             every page that carries a widget.
 
     Returns:
-        A :class:`~pdffill.model.FormInfo`. Fields come back in document order.
+        A :class:`~pdfform.model.FormInfo`. Fields come back in document order.
         A PDF without an AcroForm yields an empty inventory rather than an error,
         so that callers can tell "not a form" apart from "broken file".
     """
@@ -406,7 +406,7 @@ def extract_form_and_objects(
 
     _deduplicate(info.fields)
     if infer_labels:
-        from pdffill.labels import infer_labels as _infer
+        from pdfform.labels import infer_labels as _infer
 
         _infer(doc, info)
     return info, objects

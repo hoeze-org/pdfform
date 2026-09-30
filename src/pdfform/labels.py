@@ -21,7 +21,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 
-from pdffill.model import FieldKind, FormField, FormInfo, Widget
+from pdfform.model import FieldKind, FormField, FormInfo, Widget
 
 logger = logging.getLogger(__name__)
 
