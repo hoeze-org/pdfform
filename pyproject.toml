@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "pdffill"
+name = "pdfform"
 version = "0.1.0"
 description = "Derive a JSON Schema from a PDF form and fill it from the command line or as a library"
 authors = [
@@ -22,7 +22,7 @@ dependencies = [
 validate = ["jsonschema>=4.21"]
 
 [project.scripts]
-pdffill = "pdffill.cli:main_cli"
+pdfform = "pdfform.cli:main_cli"
 
 [dependency-groups]
 dev = [
@@ -43,7 +43,7 @@ lint = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pdffill"]
+packages = ["src/pdfform"]
 
 [tool.ruff]
 target-version = "py312"
@@ -86,7 +86,7 @@ commands = [["ruff", "check", "."]]
 [tool.tox.env."typecheck"]
 runner = "uv-venv-lock-runner"
 dependency_groups = ["lint"]
-commands = [["mypy", "src/pdffill"]]
+commands = [["mypy", "src/pdfform"]]
 
 [tool.mypy]
 python_version = "3.12"

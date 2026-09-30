@@ -5,7 +5,7 @@ import json
 import pytest
 from click.testing import CliRunner
 
-from pdffill.cli import main_cli
+from pdfform.cli import main_cli
 
 
 @pytest.fixture

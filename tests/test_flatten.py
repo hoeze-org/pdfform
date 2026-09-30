@@ -5,8 +5,8 @@ from formbuilder import appearance, read
 from pypdf import PdfWriter
 from pypdf.generic import ArrayObject, DictionaryObject, NameObject, NumberObject, TextStringObject
 
-from pdffill import fill_form
-from pdffill.flatten import flatten_widgets, placement_matrix
+from pdfform import fill_form
+from pdfform.flatten import flatten_widgets, placement_matrix
 
 
 def test_placement_matrix_is_identity_when_bbox_matches_rect():
@@ -48,7 +48,7 @@ def test_flatten_paints_the_values_onto_the_page(form_bytes):
     out = fill_form(form_bytes, {"Name": "Erika", "Consent": True}, flatten=True)
     content = read(out).pages[0].get_contents().get_data()
     assert content.count(b"Do") >= 2
-    assert b"/PdffillFm0" in content
+    assert b"/PdfformFm0" in content
 
 
 def test_flatten_keeps_the_original_page_content(form_bytes):
@@ -98,8 +98,8 @@ def test_inherited_resources_are_not_shared_between_pages():
     first = writer.pages[0]["/Resources"]["/XObject"]
     second = writer.pages[1]["/Resources"]["/XObject"]
     assert first is not second
-    assert set(first) == set(second) == {"/Shared", "/PdffillFm0"}
-    assert first.raw_get("/PdffillFm0").idnum != second.raw_get("/PdffillFm0").idnum
+    assert set(first) == set(second) == {"/Shared", "/PdfformFm0"}
+    assert first.raw_get("/PdfformFm0").idnum != second.raw_get("/PdfformFm0").idnum
     assert first.raw_get("/Shared").idnum == second.raw_get("/Shared").idnum
 
 

@@ -3,9 +3,9 @@ from __future__ import annotations
 import jsonschema
 import pytest
 
-from pdffill import build_schema, current_values, extract_form
-from pdffill.model import DynamicXfaError
-from pdffill.schema import PDF_KEYWORD
+from pdfform import build_schema, current_values, extract_form
+from pdfform.model import DynamicXfaError
+from pdfform.schema import PDF_KEYWORD
 
 
 @pytest.fixture(scope="module")
@@ -162,20 +162,20 @@ def test_current_values_skips_read_only_fields_like_the_schema_does(info):
 
 
 def test_values_of_a_filled_form_validate_against_the_schema(form_bytes, schema):
-    from pdffill import fill_form
+    from pdfform import fill_form
 
     filled = fill_form(form_bytes, {"Name": "Erika", "Consent": True, "Colour": "Red", "Notes": "x"})
     jsonschema.validate(current_values(extract_form(filled)), schema)
 
 
 def test_validate_accepts_good_values(schema):
-    from pdffill import validate_values
+    from pdfform import validate_values
 
     assert validate_values(schema, {"Name": "Erika", "Consent": True, "Colour": "Red", "Notes": "x"}) == []
 
 
 def test_validate_reports_every_problem(schema):
-    from pdffill import validate_values
+    from pdfform import validate_values
 
     problems = validate_values(schema, {"Notes": "x", "Colour": "Green", "Name": "x" * 30})
     assert len(problems) == 2
@@ -184,13 +184,13 @@ def test_validate_reports_every_problem(schema):
 
 
 def test_validate_ignores_nulls_because_they_mean_clear(schema):
-    from pdffill import validate_values
+    from pdfform import validate_values
 
     assert validate_values(schema, {"Notes": "x", "Colour": None, "Name": None}) == []
 
 
 def test_validate_reports_missing_required_fields(schema):
-    from pdffill import validate_values
+    from pdfform import validate_values
 
     problems = validate_values(schema, {"Name": "Erika"})
     assert len(problems) == 1

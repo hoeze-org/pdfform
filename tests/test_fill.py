@@ -3,8 +3,8 @@ from __future__ import annotations
 import pytest
 from formbuilder import field_dict, read
 
-from pdffill import extract_form, fill_form
-from pdffill.model import (
+from pdfform import extract_form, fill_form
+from pdfform.model import (
     DynamicXfaError,
     FieldValueError,
     UnknownFieldError,
@@ -17,7 +17,7 @@ def refill(form_bytes, values, **kwargs):
 
 
 def values_of(data):
-    from pdffill import current_values
+    from pdfform import current_values
 
     return current_values(extract_form(data))
 
@@ -231,7 +231,7 @@ def test_static_xfa_layer_can_be_kept(hybrid_bytes):
 def test_read_only_fields_are_written_with_a_warning(form_bytes, caplog):
     import logging
 
-    with caplog.at_level(logging.WARNING, logger="pdffill.fill"):
+    with caplog.at_level(logging.WARNING, logger="pdfform.fill"):
         out = refill(form_bytes, {"Locked": "changed"})
     assert "read-only" in caplog.text
     assert str(field_dict(out, "Locked")["/V"]) == "changed"

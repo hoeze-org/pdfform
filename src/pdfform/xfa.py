@@ -26,7 +26,7 @@ from typing import Any
 
 from pypdf.generic import ArrayObject, DictionaryObject, StreamObject
 
-from pdffill.model import XfaKind
+from pdfform.model import XfaKind
 
 
 def detect_xfa(acroform: DictionaryObject | None) -> XfaKind:

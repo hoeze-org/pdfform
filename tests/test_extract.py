@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from pdffill import extract_form
-from pdffill.model import FieldKind, XfaKind
+from pdfform import extract_form
+from pdfform.model import FieldKind, XfaKind
 
 
 @pytest.fixture(scope="module")

@@ -4,7 +4,7 @@
   "packages": {
     ".": {
       "release-type": "python",
-      "package-name": "pdffill",
+      "package-name": "pdfform",
       "include-component-in-tag": false,
       "include-v-in-tag": true
     }
