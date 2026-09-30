@@ -17,6 +17,10 @@ name: PR Title Lint
 # Doing so would let a fork execute arbitrary code with write access to
 # this repository ("pwn request"). If code from the PR ever needs to be
 # tested, use a separate workflow with the plain `pull_request` trigger.
+#
+# `merge_group` only runs the aggregator, so the required "PR Title Lint"
+# check reports on merge queue commits. The title was already linted before
+# the PR could enter the queue.
 on:
   pull_request_target:
     types: 
@@ -24,6 +28,7 @@ on:
       - edited
       - synchronize
       - reopened
+  merge_group:
 
 # Default-deny; each job opts in to what it needs. The aggregator needs nothing.
 permissions: {}
@@ -31,6 +36,7 @@ permissions: {}
 jobs:
   conventional-title:
     name: Validate PR title (Conventional Commits)
+    if: github.event_name == 'pull_request_target'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read # read the PR title
