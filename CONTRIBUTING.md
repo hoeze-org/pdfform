@@ -12,7 +12,7 @@ micromamba env create -f environment-dev.yml
 micromamba activate pdfform
 
 # Install all dependency groups (runtime + dev + test + lint) into a uv-managed venv
-uv sync --all-groups --all-extras
+uv sync --all-groups
 ```
 
 All subsequent commands assume the env is activated and `uv` is on `PATH`.

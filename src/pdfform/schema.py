@@ -25,13 +25,14 @@ from __future__ import annotations
 
 from typing import Any
 
+import jsonschema
+
 from pdfform.model import (
     OFF_STATE,
     DynamicXfaError,
     FieldKind,
     FormField,
     FormInfo,
-    PdfFormError,
     XfaKind,
 )
 
@@ -270,15 +271,7 @@ def validate_values(schema: dict[str, Any], values: dict[str, Any]) -> list[str]
     Returns:
         Human-readable messages, most significant first. An empty list means the
         values validate.
-
-    Raises:
-        PdfFormError: If ``jsonschema`` is not installed.
     """
-    try:
-        import jsonschema
-    except ModuleNotFoundError as exc:  # pragma: no cover - depends on the install
-        raise PdfFormError("Validation needs jsonschema. Install it with: pip install 'pdfform[validate]'") from exc
-
     instance = {key: value for key, value in values.items() if value is not None}
     validator = jsonschema.Draft202012Validator(schema)
     errors = sorted(validator.iter_errors(instance), key=lambda e: list(e.absolute_path))

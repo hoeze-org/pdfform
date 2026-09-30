@@ -16,10 +16,8 @@ keywords = ["pdf", "acroform", "forms", "json-schema", "xfa"]
 dependencies = [
     "pypdf>=5.1",
     "click>=8.1",
+    "jsonschema>=4.21",
 ]
-
-[project.optional-dependencies]
-validate = ["jsonschema>=4.21"]
 
 [project.scripts]
 pdfform = "pdfform.cli:main_cli"
@@ -35,7 +33,6 @@ test = [
     "pytest-mock",
     "pytest-cov",
     "pytest-sugar",
-    "jsonschema>=4.21",
 ]
 lint = [
     "ruff",

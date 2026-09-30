@@ -21,13 +21,7 @@ Requires Python >= 3.12.
 pip install pdfform
 ```
 
-Add the `validate` extra to pull in `jsonschema`, which the `validate` command and `--validate` need:
-
-```bash
-pip install 'pdfform[validate]'
-```
-
-From a checkout, `uv sync --all-groups --all-extras` sets everything up; see [CONTRIBUTING.md](CONTRIBUTING.md).
+From a checkout, `uv sync --all-groups` sets everything up; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Command line
 
