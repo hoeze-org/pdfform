@@ -1,0 +1,7 @@
+name: pdfform
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python >=3.12
+  - uv =0.11

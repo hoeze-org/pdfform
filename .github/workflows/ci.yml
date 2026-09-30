@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  UV_VERSION: "0.11.6"
+  UV_PYTHON_PREFERENCE: "managed"
+
+jobs:
+  quality-checks:
+    name: Quality Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.14
+
+      - name: Ensure uv lockfile is up-to-date
+        run: uv lock --check
+
+      - name: Install project dependencies
+        run: uv sync --all-groups
+
+      - name: Check formatting
+        run: uv run tox -e format-check
+
+      - name: Linting
+        run: uv run tox -e lints
+
+      - name: Run type checking
+        run: uv run tox -e typecheck
+
+  test:
+    name: Test (Python ${{ matrix.python-version }})
+    needs: [quality-checks]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.14"]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install project dependencies
+        run: uv sync --all-groups
+
+      - name: Run tests
+        run: uv run tox -e py${{ matrix.python-version }}
+
+  # Aggregator job: a single, stable check-run name to use as the required
+  # status check in branch protection. Stays valid even if the matrix or the
+  # individual job names change.
+  ci:
+    name: CI
+    needs: [quality-checks, test]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Verify no upstream job failed
+        run: |
+          # Fail only on failure/cancelled. A skipped job is allowed
+          for result in "${{ needs.quality-checks.result }}" "${{ needs.test.result }}"; do
+            if [ "$result" = "failure" ] || [ "$result" = "cancelled" ]; then
+              echo "An upstream job did not pass: quality-checks=${{ needs.quality-checks.result }} test=${{ needs.test.result }}"
+              exit 1
+            fi
+          done

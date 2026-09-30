@@ -1,0 +1,19 @@
+.devcontainer/
+.DS_Store
+*.egg-info/
+*.pyc
+*.log
+.vscode
+.venv
+.coverage
+coverage.xml
+.*.swp
+.tox/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+data/
+dist/
+
+# Sample forms used for manual testing are kept out of the repository.
+/*.pdf
