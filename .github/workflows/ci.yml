@@ -1,8 +1,8 @@
 name: CI
 
 on:
-  push:
-    branches: [main, master]
+  # No push trigger: the merge queue already runs CI on the commit that
+  # lands on main, so a push run would test the same SHA again.
   pull_request:
   merge_group:
   workflow_dispatch:
