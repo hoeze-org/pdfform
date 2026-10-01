@@ -22,11 +22,13 @@ from pdfform.model import (
     MissingDependencyError,
     PdfFormError,
     SignatureImageError,
+    SigningError,
     UnknownFieldError,
     Widget,
     XfaKind,
 )
 from pdfform.schema import build_schema, current_values, field_schema, validate_values
+from pdfform.sign import sign_pdf
 from pdfform.stamp import stamp_signature
 from pdfform.xfa import detect_xfa, strip_xfa, xfa_packets
 
@@ -46,6 +48,7 @@ __all__ = [
     "MissingDependencyError",
     "PdfFormError",
     "SignatureImageError",
+    "SigningError",
     "UnknownFieldError",
     "Widget",
     "XfaKind",
@@ -60,6 +63,7 @@ __all__ = [
     "flatten_widgets",
     "get_acroform",
     "open_pdf",
+    "sign_pdf",
     "stamp_signature",
     "strip_xfa",
     "strip_xfa_layer",

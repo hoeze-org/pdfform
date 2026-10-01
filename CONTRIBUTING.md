@@ -12,7 +12,7 @@ micromamba env create -f environment-dev.yml
 micromamba activate pdfform
 
 # Install all dependency groups (runtime + dev + test + lint) and the optional
-# extra (stamp) into a uv-managed venv
+# extras (stamp, sign) into a uv-managed venv
 uv sync --all-groups --all-extras
 ```
 
@@ -66,7 +66,7 @@ The test forms are built by hand in `tests/formbuilder.py` from `pypdf` primitiv
 
 When adding support for a construct, add it to `build_form` rather than creating a one-off document, so the whole suite exercises it.
 
-The tests for `stamp` skip themselves when its optional dependencies are missing. `tox` installs the extra, so CI runs them.
+The tests for `stamp` and `sign` skip themselves when their optional dependencies are missing. `tox` installs both extras, so CI runs them.
 
 ## Releases
 

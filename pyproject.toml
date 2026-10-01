@@ -27,6 +27,9 @@ stamp = [
     "pillow>=10",
     "svglib>=1.5",
 ]
+sign = [
+    "pyhanko>=0.25",
+]
 
 [dependency-groups]
 dev = [
@@ -72,7 +75,7 @@ isolated_build = true
 runner = "uv-venv-lock-runner"
 description = "run unit tests"
 dependency_groups = ["test"]
-extras = ["stamp"]
+extras = ["stamp", "sign"]
 commands = [["pytest", { replace = "posargs", default = ["tests"], extend = true }]]
 
 [tool.tox.env."format-check"]

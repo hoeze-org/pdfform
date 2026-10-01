@@ -12,6 +12,7 @@ There is no single library that reads an AcroForm, describes it as a schema, and
 - **Flattening** that bakes the appearance streams into the page content using the placement algorithm from the PDF spec, rather than only translating them.
 - **XFA awareness.** Static and dynamic XFA are told apart, static XFA layers can be dropped (the `pdftk drop_xfa` equivalent), and dynamic XFA fails loudly instead of producing an empty schema.
 - **Signature images.** `stamp` draws a PDF, PNG, JPEG or SVG signature into a signature field.
+- **Cryptographic signing.** `sign` signs the document with a certificate, as a separate step.
 - **Label inference.** Optional best-effort guessing of what a field called `Text12` actually means, from the text printed next to it.
 
 ## Installation
@@ -22,10 +23,11 @@ Requires Python >= 3.12.
 pip install pdfform
 ```
 
-Signature images bring their own dependencies for PNG, JPEG and SVG, so the base install stays small:
+The signature commands bring their own dependencies, so the base install stays small:
 
 ```bash
 pip install 'pdfform[stamp]'   # PNG, JPEG and SVG signatures (Pillow, svglib). PDF signatures need nothing extra
+pip install 'pdfform[sign]'    # cryptographic signatures (pyHanko)
 ```
 
 From a checkout, `uv sync --all-groups --all-extras` sets everything up; see [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -67,7 +69,7 @@ pdfform validate form.pdf -d data.json
 pdfform fill form.pdf -d data.json -o filled.pdf --validate   # refuses to write on a mismatch
 ```
 
-Other commands: `pdfform stamp`, described below, `pdfform strip-xfa` removes an XFA layer, `pdfform xfa` lists or dumps the XFA packets. `pdfform --help` covers the rest.
+Other commands: `pdfform stamp` and `pdfform sign`, described below, `pdfform strip-xfa` removes an XFA layer, `pdfform xfa` lists or dumps the XFA packets. `pdfform --help` covers the rest.
 
 ## Library
 
@@ -101,7 +103,7 @@ for field in info.fillable:
 | dropdown    | `{"type": "string", "enum": [...]}`, or a free string for an editable combo box |
 | list box    | as dropdown, or an array of them when multi-select is set |
 | push button | omitted, it holds no value |
-| signature   | omitted by default, it takes no value. See `stamp` |
+| signature   | omitted by default, it takes no value. See `stamp` and `sign` |
 
 Read-only fields are omitted unless `--include-read-only` is given. Everything needed to write a value back is preserved under the `x-pdf` keyword, which validators ignore:
 
@@ -149,20 +151,34 @@ Widgets that are hidden, or that have no appearance stream at all, are removed w
 
 ## Signing
 
-A signature field cannot be filled with a value. `stamp` draws a signature image into it.
+A signature field cannot be filled with a value, and "signing" means two different things. They are two commands, and they compose.
+
+**`stamp` draws a signature image.** It makes the field look signed, nothing more. The image becomes the field's appearance, so `fill --flatten` bakes it into the page like any other widget.
 
 ```bash
 pdfform stamp form.pdf --field Antragsteller_Unterschrift --image signature.png -o stamped.pdf
 ```
 
-This makes the field look signed, nothing more. The image becomes the field's appearance, so `fill --flatten` bakes it into the page like any other widget. The source can be a PDF (first page), PNG, JPEG or SVG. The image keeps its aspect ratio and is centred in the field (`--fit contain`), or fills it and distorts (`--fit stretch`). Transparent PNGs keep their transparency. A PDF or SVG stays vector.
+The source can be a PDF (first page), PNG, JPEG or SVG. The image keeps its aspect ratio and is centred in the field (`--fit contain`), or fills it and distorts (`--fit stretch`). Transparent PNGs keep their transparency. A PDF or SVG stays vector.
+
+**`sign` adds a cryptographic signature.** It needs a certificate and a private key, as a PKCS#12 file or as PEM files, and is written as an incremental update, so earlier signatures stay valid.
+
+```bash
+pdfform sign stamped.pdf --p12 me.p12 --field Antragsteller_Unterschrift -o signed.pdf
+pdfform sign stamped.pdf --key key.pem --cert cert.pem --ask-passphrase -o signed.pdf
+```
+
+The passphrase is never a command line argument, so it stays out of the shell history. Use `--ask-passphrase`, `--passphrase-file`, or the `PDFFORM_PASSPHRASE` environment variable. A form with a single signature field signs that field, a document without one gets an invisible `Signature1`, and several fields need `--field`. An image placed by `stamp` stays visible. Fields that were not signed yet remain signable, so two people can sign two fields one after the other.
+
+**Order: `fill`, then `stamp`, then `sign`.** Anything that rewrites the file afterwards, `fill` and `stamp` included, invalidates the signature. Whether a recipient trusts the signature depends on the certificate: a self-signed one gives a signature that is intact but not trusted. There is no timestamp, since that would need a request to a timestamp authority.
 
 In Python:
 
 ```python
-from pdfform import stamp_signature
+from pdfform import stamp_signature, sign_pdf
 
-stamp_signature("form.pdf", "Antragsteller_Unterschrift", "signature.png", "stamped.pdf")
+stamped = stamp_signature("form.pdf", "Antragsteller_Unterschrift", "signature.png")
+sign_pdf(stamped, "signed.pdf", pkcs12="me.p12", passphrase="...", field="Antragsteller_Unterschrift")
 ```
 
 ## Development

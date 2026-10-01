@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from pdfform.extract import extract_form, get_acroform, open_pdf
 from pdfform.fill import fill_form, flatten_values, strip_xfa_layer
 from pdfform.model import OFF_STATE, FieldKind, FormInfo, PdfFormError, XfaKind
 from pdfform.schema import build_schema, current_values, validate_values
+from pdfform.sign import sign_pdf
 from pdfform.stamp import stamp_signature
 from pdfform.xfa import xfa_packets
 
@@ -75,6 +77,7 @@ def main_cli(verbose: int) -> None:
       pdfform values form.pdf -o data.json        # start from the current values
       pdfform fill form.pdf -d data.json -o out.pdf
       pdfform stamp out.pdf --field Sign --image signature.png -o stamped.pdf
+      pdfform sign stamped.pdf --p12 me.p12 -o signed.pdf   # last, any later change breaks it
     """
     _configure_logging(verbose)
 
@@ -367,14 +370,80 @@ def stamp(pdf: Path, field_name: str, image: Path, output: Path, fit: str) -> No
     """Draw a signature image into a signature field of PDF.
 
     This only makes the field look signed. It is not a cryptographic signature,
-    a signature field still takes no value. The image becomes the field's
-    appearance, so `fill --flatten` bakes it into the page.
+    see `pdfform sign` for that. The image becomes the field's appearance, so
+    `fill --flatten` bakes it into the page and `sign` keeps it visible.
     PNG, JPEG and SVG need `pip install 'pdfform[stamp]'`.
 
     \b
       pdfform stamp form.pdf --field Antragsteller_Unterschrift --image sig.png -o out.pdf
     """
     stamp_signature(pdf, field_name, image, output, fit=fit)  # type: ignore[arg-type]
+    click.echo(f"Wrote {output}", err=True)
+
+
+@main_cli.command()
+@click.argument("pdf", type=PDF_ARG)
+@click.option("--p12", type=PDF_ARG, help="PKCS#12 file (.p12, .pfx) with the key and certificate.")
+@click.option("--key", type=PDF_ARG, help="PEM private key. Needs --cert.")
+@click.option("--cert", type=PDF_ARG, help="PEM certificate of the signer.")
+@click.option("--chain", type=PDF_ARG, multiple=True, help="PEM certificate of an intermediate. Repeatable.")
+@click.option(
+    "--passphrase-file",
+    type=PDF_ARG,
+    help="File holding the passphrase of the key. The PDFFORM_PASSPHRASE environment variable works too.",
+)
+@click.option("--ask-passphrase", is_flag=True, help="Prompt for the passphrase of the key.")
+@click.option("--field", "field_name", metavar="NAME", help="The signature field to sign. See below for the default.")
+@click.option("--reason", help="Why the document is signed.")
+@click.option("--location", help="Where it was signed.")
+@click.option("--contact", help="How to reach the signer.")
+@click.option("-o", "--output", type=OUT_OPT, required=True, help="Where to write the signed PDF.")
+def sign(
+    pdf: Path,
+    p12: Path | None,
+    key: Path | None,
+    cert: Path | None,
+    chain: tuple[Path, ...],
+    passphrase_file: Path | None,
+    ask_passphrase: bool,
+    field_name: str | None,
+    reason: str | None,
+    location: str | None,
+    contact: str | None,
+    output: Path,
+) -> None:
+    """Sign PDF with a certificate, as an incremental update.
+
+    A form with one signature field signs that field. A document without one
+    gets an invisible `Signature1`. With several, pick one with --field. A
+    signature image placed with `pdfform stamp` stays visible.
+
+    Sign last. Any change afterwards, `fill` included, breaks the signature.
+    Needs `pip install 'pdfform[sign]'`. The passphrase is never a command line
+    argument, so it does not end up in the shell history.
+
+    \b
+      pdfform sign form.pdf --p12 me.p12 --field Antragsteller_Unterschrift -o signed.pdf
+      pdfform sign form.pdf --key key.pem --cert cert.pem --ask-passphrase -o signed.pdf
+    """
+    passphrase: str | None = os.environ.get("PDFFORM_PASSPHRASE")
+    if passphrase_file is not None:
+        passphrase = passphrase_file.read_text(encoding="utf-8").rstrip("\r\n")
+    if ask_passphrase:
+        passphrase = click.prompt("Passphrase", hide_input=True, err=True)
+    sign_pdf(
+        pdf,
+        output,
+        pkcs12=p12,
+        key=key,
+        cert=cert,
+        chain=chain,
+        passphrase=passphrase,
+        field=field_name,
+        reason=reason,
+        location=location,
+        contact=contact,
+    )
     click.echo(f"Wrote {output}", err=True)
 
 

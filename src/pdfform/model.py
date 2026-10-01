@@ -243,3 +243,7 @@ class SignatureImageError(PdfFormError):
 
 class MissingDependencyError(PdfFormError):
     """Raised when an optional dependency is needed and not installed."""
+
+
+class SigningError(PdfFormError):
+    """Raised when a document cannot be signed, for example on a wrong key or passphrase."""
