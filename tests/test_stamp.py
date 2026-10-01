@@ -5,7 +5,7 @@ import io
 import pytest
 from formbuilder import field_dict, read
 from pypdf import PdfWriter
-from pypdf.generic import DecodedStreamObject, NameObject
+from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, FloatObject, NameObject, NumberObject
 
 from pdfform import (
     FieldValueError,
@@ -107,17 +107,77 @@ def test_rotated_pdf_page_is_placed_upright(form_bytes):
     writer.pages[0].rotate(90)
     buffer = io.BytesIO()
     writer.write(buffer)
-    box = drawn_box(stamp_signature(form_bytes, "Sign", buffer.getvalue()))
+    data = stamp_signature(form_bytes, "Sign", buffer.getvalue())
+    box = drawn_box(data)
     assert (box[2] - box[0]) / (box[3] - box[1]) == pytest.approx(0.25, rel=1e-3)
+    inner = field_dict(data, "Sign")["/AP"]["/N"].get_object()["/Resources"]["/XObject"]["/Sig"].get_object()
+    assert [float(v) for v in inner["/Matrix"]] == [0, -1, 1, 0, 0, 0]  # clockwise, as /Rotate 90 shows it
+
+
+def turned(form_bytes: bytes, how: str) -> bytes:
+    """The form with the Sign widget turned by 90 degrees. On screen the field is still 200 x 40."""
+    writer = PdfWriter(clone_from=io.BytesIO(form_bytes))
+    page = writer.pages[1]
+    for ref in page["/Annots"]:
+        widget = ref.get_object()
+        if widget.get("/T") == "Sign":
+            widget[NameObject("/Rect")] = ArrayObject([FloatObject(v) for v in (50, 440, 90, 640)])
+            if how == "mk":
+                widget[NameObject("/MK")] = DictionaryObject({NameObject("/R"): NumberObject(90)})
+            if how == "page-via-p":
+                widget[NameObject("/P")] = page.indirect_reference
+    if how.startswith("page"):
+        page[NameObject("/Rotate")] = NumberObject(90)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize("how", ["mk", "page", "page-via-p"])
+def test_a_turned_widget_gets_an_upright_signature(form_bytes, how):
+    data = stamp_signature(turned(form_bytes, how), "Sign", png(400, 100))
+    appearance = field_dict(data, "Sign")["/AP"]["/N"].get_object()
+    assert [float(v) for v in appearance["/Matrix"]] == [0, 1, -1, 0, 0, 0]  # counterclockwise, like /MK /R
+    assert drawn_box(data) == pytest.approx((20, 0, 180, 40))  # the 200 x 40 field, before turning
+
+
+def test_an_upright_widget_gets_no_matrix(form_bytes):
+    data = stamp_signature(form_bytes, "Sign", png(40, 10))
+    assert "/Matrix" not in field_dict(data, "Sign")["/AP"]["/N"].get_object()
+
+
+def inner_image(data: bytes) -> DictionaryObject:
+    appearance = field_dict(data, "Sign")["/AP"]["/N"].get_object()
+    inner = appearance["/Resources"]["/XObject"]["/Sig"].get_object()
+    return inner["/Resources"]["/XObject"]["/Img"].get_object()
 
 
 def test_raster_alpha_becomes_a_soft_mask(form_bytes):
-    data = stamp_signature(form_bytes, "Sign", png(40, 10))
-    appearance = field_dict(data, "Sign")["/AP"]["/N"].get_object()
-    inner = appearance["/Resources"]["/XObject"]["/Sig"].get_object()
-    image = inner["/Resources"]["/XObject"]["/Img"].get_object()
+    image = inner_image(stamp_signature(form_bytes, "Sign", png(40, 10)))
     assert image["/ColorSpace"] == "/DeviceRGB"
     assert image["/SMask"].get_object()["/ColorSpace"] == "/DeviceGray"
+
+
+def test_jpeg_is_embedded_as_is(form_bytes):
+    source = jpeg(300, 100)
+    image = inner_image(stamp_signature(form_bytes, "Sign", source))
+    assert image["/Filter"] == "/DCTDecode"
+    assert image._data == source
+
+
+def test_a_jpeg_turned_by_exif_is_decoded_upright(form_bytes):
+    exif = PIL.Exif()
+    exif[0x0112] = 6  # turn 90 degrees clockwise to display
+    buffer = io.BytesIO()
+    PIL.new("RGB", (300, 100), (10, 10, 10)).save(buffer, "JPEG", exif=exif)
+    image = inner_image(stamp_signature(form_bytes, "Sign", buffer.getvalue()))
+    assert image["/Filter"] == "/FlateDecode"
+    assert (image["/Width"], image["/Height"]) == (100, 300)
+
+
+def test_the_appearance_is_marked_as_a_stamp(form_bytes):
+    data = stamp_signature(form_bytes, "Sign", png(40, 10))
+    assert field_dict(data, "Sign")["/AP"]["/N"].get_object()["/PdfformStamp"]
 
 
 def test_opaque_png_gets_no_soft_mask(form_bytes):
@@ -279,6 +339,19 @@ def test_cli_fill_with_only_a_stamp(form_path, tmp_path):
     from pdfform.cli import main_cli
 
     image = tmp_path / "sig.png"
+    image.write_bytes(png(40, 10))
+    result = CliRunner().invoke(
+        main_cli, ["fill", str(form_path), "--stamp", f"Sign={image}", "-o", str(tmp_path / "o.pdf")]
+    )
+    assert result.exit_code == 0, result.output
+
+
+def test_cli_fill_stamp_splits_on_the_first_equals_sign(form_path, tmp_path):
+    from click.testing import CliRunner
+
+    from pdfform.cli import main_cli
+
+    image = tmp_path / "a=b.png"
     image.write_bytes(png(40, 10))
     result = CliRunner().invoke(
         main_cli, ["fill", str(form_path), "--stamp", f"Sign={image}", "-o", str(tmp_path / "o.pdf")]

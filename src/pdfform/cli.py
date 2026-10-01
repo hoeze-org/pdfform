@@ -233,7 +233,7 @@ def _signing_arguments(
     location: str | None,
     contact: str | None,
 ) -> dict[str, Any]:
-    passphrase: str | None = os.environ.get("PDFFORM_PASSPHRASE")
+    passphrase: str | None = os.environ.get("PDFFORM_PASSPHRASE") or None
     if passphrase_file is not None:
         passphrase = passphrase_file.read_text(encoding="utf-8").rstrip("\r\n")
     if ask_passphrase:
@@ -253,7 +253,7 @@ def _signing_arguments(
 def _parse_stamps(stamps: tuple[str, ...]) -> dict[str, Path]:
     parsed: dict[str, Path] = {}
     for item in stamps:
-        name, separator, image = item.rpartition("=")
+        name, separator, image = item.partition("=")
         if not separator or not name:
             raise click.ClickException(f"--stamp expects FIELD=IMAGE, got {item!r}")
         path = Path(image)
@@ -284,7 +284,7 @@ def _parse_stamps(stamps: tuple[str, ...]) -> dict[str, Path]:
     "--need-appearances/--no-need-appearances",
     default=True,
     show_default=True,
-    help="Ask viewers to regenerate the field appearances.",
+    help="Ask viewers to regenerate the field appearances. Not set with --flatten or --sign.",
 )
 @click.option(
     "--strip-xfa/--keep-xfa",
@@ -344,7 +344,8 @@ def fill(
 
     \b
     Fill, stamp and sign in one go. The order is fixed: values, stamps, then the
-    signature, which has to be last because any later change breaks it.
+    signature, which has to be last because any later change breaks it. A signed
+    file must not change, so it does not ask viewers to regenerate appearances.
       pdfform fill form.pdf -d values.json --stamp Unterschrift=sig.png \\
           --sign --p12 me.p12 --sign-field Unterschrift -o out.pdf
     """
@@ -356,14 +357,21 @@ def fill(
         payload[name] = _parse_scalar(value)
 
     stamp_images = _parse_stamps(stamps)
-    signing = _signing_arguments(p12, key, cert, chain, passphrase_file, ask_passphrase, reason, location, contact)
-    if not do_sign and (
-        sign_field is not None
-        or any(signing[k] for k in ("pkcs12", "key", "cert", "chain", "reason", "location", "contact"))
-    ):
+    signing_options = (sign_field, p12, key, cert, passphrase_file, reason, location, contact)
+    if not do_sign and (chain or ask_passphrase or any(o is not None for o in signing_options)):
         raise click.ClickException("Key, certificate and signature options only work together with --sign.")
+    if flatten and sign_field is not None:
+        raise click.ClickException(
+            "--flatten removes the form, so there is no field left for --sign-field. "
+            "The signature goes into a new invisible field."
+        )
     if not (payload or stamp_images or do_sign):
         raise click.ClickException("No values given. Use --data, --set, --stamp and/or --sign.")
+    signing = (
+        _signing_arguments(p12, key, cert, chain, passphrase_file, ask_passphrase, reason, location, contact)
+        if do_sign
+        else {}
+    )
 
     if check:
         problems = validate_values(build_schema(extract_form(pdf)), flatten_values(payload))
@@ -377,7 +385,7 @@ def fill(
         payload,
         None if do_sign else output,
         flatten=flatten,
-        need_appearances=need_appearances,
+        need_appearances=need_appearances and not do_sign,
         strict=strict,
         strip_xfa=strip_xfa,
         stamp=stamp_images,  # type: ignore[arg-type]
@@ -484,6 +492,9 @@ def stamp(pdf: Path, field_name: str, image: Path, output: Path, fit: str) -> No
     `fill --flatten` bakes it into the page and `sign` keeps it visible.
     PNG, JPEG and SVG need `pip install 'pdfform[stamp]'`.
 
+    A signed document is refused, because stamping would break the signature.
+    Stamp every field before the first signature.
+
     \b
       pdfform stamp form.pdf --field Antragsteller_Unterschrift --image sig.png -o out.pdf
     """
@@ -512,9 +523,10 @@ def sign(
 ) -> None:
     """Sign PDF with a certificate, as an incremental update.
 
-    A form with one signature field signs that field. A document without one
-    gets an invisible `Signature1`. With several, pick one with --field. A
-    signature image placed with `pdfform stamp` stays visible.
+    A form with one unsigned signature field signs that field. A document
+    without one gets a new invisible `Signature1`, or `Signature2` if that is
+    taken. With several, pick one with --field. A signature image placed with
+    `pdfform stamp` stays visible.
 
     Sign last. Any change afterwards, `fill` included, breaks the signature.
     Needs `pip install 'pdfform[sign]'`. The passphrase is never a command line

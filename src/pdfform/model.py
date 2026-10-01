@@ -247,3 +247,7 @@ class MissingDependencyError(PdfFormError):
 
 class SigningError(PdfFormError):
     """Raised when a document cannot be signed, for example on a wrong key or passphrase."""
+
+
+class SignedDocumentError(PdfFormError):
+    """Raised when a change would break a signature the document already carries."""

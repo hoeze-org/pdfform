@@ -159,18 +159,18 @@ A signature field cannot be filled with a value, and "signing" means two differe
 pdfform stamp form.pdf --field Antragsteller_Unterschrift --image signature.png -o stamped.pdf
 ```
 
-The source can be a PDF (first page), PNG, JPEG or SVG. The image keeps its aspect ratio and is centred in the field (`--fit contain`), or fills it and distorts (`--fit stretch`). Transparent PNGs keep their transparency. A PDF or SVG stays vector.
+The source can be a PDF (first page), PNG, JPEG or SVG. The image keeps its aspect ratio and is centred in the field (`--fit contain`), or fills it and distorts (`--fit stretch`). Transparent PNGs keep their transparency. A PDF or SVG stays vector, and a JPEG is embedded as is. On a turned page, or a widget turned by `/MK /R`, the image turns with the field, so it reads upright.
 
-**`sign` adds a cryptographic signature.** It needs a certificate and a private key, as a PKCS#12 file or as PEM files, and is written as an incremental update, so earlier signatures stay valid.
+**`sign` adds a cryptographic signature.** It needs a certificate and a private key, as a PKCS#12 file or as PEM files. The signature is a PAdES signature (`ETSI.CAdES.detached`), written as an incremental update, so earlier signatures stay valid.
 
 ```bash
 pdfform sign stamped.pdf --p12 me.p12 --field Antragsteller_Unterschrift -o signed.pdf
 pdfform sign stamped.pdf --key key.pem --cert cert.pem --ask-passphrase -o signed.pdf
 ```
 
-The passphrase is never a command line argument, so it stays out of the shell history. Use `--ask-passphrase`, `--passphrase-file`, or the `PDFFORM_PASSPHRASE` environment variable. A form with a single signature field signs that field, a document without one gets an invisible `Signature1`, and several fields need `--field`. An image placed by `stamp` stays visible. Fields that were not signed yet remain signable, so two people can sign two fields one after the other.
+The passphrase is never a command line argument, so it stays out of the shell history. Use `--ask-passphrase`, `--passphrase-file`, or the `PDFFORM_PASSPHRASE` environment variable. A key without a passphrase loads even when one is set. A form with a single unsigned signature field signs that field. A document without one gets a new invisible field, `Signature1` or the next free number. Several unsigned fields need `--field`. An image placed by `stamp` stays visible, and any other field gets pyHanko's text appearance. Fields that were not signed yet remain signable, so two people can sign two fields one after the other.
 
-**Order: `fill`, then `stamp`, then `sign`.** Anything that rewrites the file afterwards, `fill` and `stamp` included, invalidates the signature. Whether a recipient trusts the signature depends on the certificate: a self-signed one gives a signature that is intact but not trusted. There is no timestamp, since that would need a request to a timestamp authority.
+**Order: `fill`, then `stamp`, then `sign`.** Anything that rewrites the file afterwards, `fill` and `stamp` included, invalidates the signature. So with two signers, stamp both fields before the first signature. `stamp` refuses a signed document. `fill` still fills one, because certified blank templates are signed too, but it warns that the signature breaks. Whether a recipient trusts the signature depends on the certificate: a self-signed one gives a signature that is intact but not trusted. There is no timestamp, since that would need a request to a timestamp authority.
 
 **`fill` does all three at once.** `--stamp FIELD=IMAGE` (repeatable, with `--stamp-fit`) stamps after the values are set. `--sign` signs last, and `--sign-field` picks the field. `fill` takes the same key and passphrase options as `sign`, so the order is always right:
 
@@ -179,7 +179,7 @@ pdfform fill form.pdf -d data.json --stamp Antragsteller_Unterschrift=signature.
   --sign --sign-field Antragsteller_Unterschrift --p12 me.p12 -o signed.pdf
 ```
 
-With `--flatten` the stamped image is baked into the page before signing. The signature then goes into a new invisible `Signature1`, because flattening removes the form.
+With `--flatten` the stamped image is baked into the page before signing. The signature then goes into a new invisible `Signature1`, because flattening removes the form, so `--sign-field` is refused. With `--sign`, `fill` does not set `/NeedAppearances`, because a viewer that regenerates appearances would change the signed file. The appearances `fill` generates itself stay.
 
 In Python:
 

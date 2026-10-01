@@ -6,9 +6,23 @@ import io
 import pytest
 from formbuilder import field_dict, read
 from pypdf import PdfWriter
-from pypdf.generic import NameObject, TextStringObject
+from pypdf.generic import (
+    ArrayObject,
+    DecodedStreamObject,
+    DictionaryObject,
+    NameObject,
+    NumberObject,
+    TextStringObject,
+)
 
-from pdfform import MissingDependencyError, SigningError, UnknownFieldError, sign_pdf, stamp_signature
+from pdfform import (
+    MissingDependencyError,
+    SignedDocumentError,
+    SigningError,
+    UnknownFieldError,
+    sign_pdf,
+    stamp_signature,
+)
 
 pytest.importorskip("pyhanko")
 x509 = pytest.importorskip("cryptography.x509")
@@ -177,8 +191,81 @@ def test_two_signatures_in_two_fields(form_bytes, files, identity):
 
 def test_signing_the_same_field_twice_is_refused(form_bytes, files):
     once = sign_pdf(form_bytes, pkcs12=files["p12"], passphrase=PASSPHRASE)
-    with pytest.raises(SigningError):
+    with pytest.raises(SigningError, match="signed already"):
         sign_pdf(once, pkcs12=files["p12"], passphrase=PASSPHRASE, field="Sign")
+
+
+def test_the_default_skips_a_signed_field(form_bytes, files):
+    once = sign_pdf(two_signature_fields(form_bytes), pkcs12=files["p12"], passphrase=PASSPHRASE, field="Sign")
+    twice = sign_pdf(once, pkcs12=files["p12"], passphrase=PASSPHRASE)
+    assert [s.field_name for s in PdfFileReader(io.BytesIO(twice)).embedded_signatures] == ["Sign", "Sign2"]
+
+
+def test_signing_again_without_a_free_field_adds_an_invisible_one(no_form_bytes, files, identity):
+    once = sign_pdf(no_form_bytes, pkcs12=files["p12"], passphrase=PASSPHRASE)
+    twice = sign_pdf(once, pkcs12=files["p12"], passphrase=PASSPHRASE)
+    signatures, _ = check(twice, identity[1], count=2)
+    assert [s.field_name for s in signatures] == ["Signature1", "Signature2"]
+
+
+def test_a_fully_signed_form_gets_an_invisible_field_and_a_warning(form_bytes, files, caplog):
+    once = sign_pdf(form_bytes, pkcs12=files["p12"], passphrase=PASSPHRASE)
+    twice = sign_pdf(once, pkcs12=files["p12"], passphrase=PASSPHRASE)
+    assert [s.field_name for s in PdfFileReader(io.BytesIO(twice)).embedded_signatures] == ["Sign", "Signature1"]
+    assert "signed already" in caplog.text
+
+
+def test_a_template_appearance_is_replaced(form_bytes, files):
+    """Only an appearance drawn by stamp survives signing. A "sign here" placeholder does not."""
+    writer = PdfWriter(clone_from=io.BytesIO(form_bytes))
+    placeholder = DecodedStreamObject()
+    placeholder.set_data(b"BT /Helv 8 Tf 2 2 Td (sign here) Tj ET")
+    placeholder.update({NameObject("/Type"): NameObject("/XObject"), NameObject("/Subtype"): NameObject("/Form")})
+    placeholder[NameObject("/BBox")] = ArrayObject([NumberObject(v) for v in (0, 0, 200, 40)])
+    for ref in writer.root_object["/AcroForm"]["/Fields"]:
+        if ref.get_object().get("/T") == "Sign":
+            ref.get_object()[NameObject("/AP")] = DictionaryObject({NameObject("/N"): writer._add_object(placeholder)})
+    buffer = io.BytesIO()
+    writer.write(buffer)
+
+    signed = sign_pdf(buffer.getvalue(), pkcs12=files["p12"], passphrase=PASSPHRASE)
+    assert b"sign here" not in field_dict(signed, "Sign")["/AP"]["/N"].get_data()
+
+
+def test_signs_as_pades(form_bytes, files):
+    signed = sign_pdf(form_bytes, pkcs12=files["p12"], passphrase=PASSPHRASE)
+    assert field_dict(signed, "Sign")["/V"].get_object()["/SubFilter"] == "/ETSI.CAdES.detached"
+
+
+def test_chain_certificates_are_accepted(form_bytes, files, identity):
+    check(sign_pdf(form_bytes, pkcs12=files["p12"], passphrase=PASSPHRASE, chain=[files["cert"]]), identity[1])
+
+
+def png_signature() -> bytes:
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    image = io.BytesIO()
+    Image.new("RGB", (40, 10), (0, 0, 0)).save(image, "PNG")
+    return image.getvalue()
+
+
+def test_stamping_a_signed_document_is_refused(form_bytes, files):
+    from pdfform import fill_form
+
+    signed = sign_pdf(two_signature_fields(form_bytes), pkcs12=files["p12"], passphrase=PASSPHRASE, field="Sign")
+    with pytest.raises(SignedDocumentError, match="Sign"):
+        stamp_signature(signed, "Sign2", png_signature())
+    with pytest.raises(SignedDocumentError):
+        fill_form(signed, {}, stamp={"Sign2": png_signature()})
+
+
+def test_filling_a_signed_document_warns(form_bytes, files, caplog):
+    from pdfform import fill_form
+
+    signed = sign_pdf(form_bytes, pkcs12=files["p12"], passphrase=PASSPHRASE)
+    fill_form(signed, {"Name": "Doe"})
+    assert "breaks the signature" in caplog.text
 
 
 def test_field_must_be_a_signature_field(form_bytes, files):
@@ -191,14 +278,22 @@ def test_unknown_field(form_bytes, files):
         sign_pdf(form_bytes, pkcs12=files["p12"], passphrase=PASSPHRASE, field="Nope")
 
 
-def test_wrong_passphrase(form_bytes, files):
-    with pytest.raises(SigningError, match="Could not load"):
-        sign_pdf(form_bytes, pkcs12=files["p12"], passphrase="wrong")
+@pytest.mark.parametrize("kind", ["p12", "pem"])
+def test_wrong_passphrase_is_one_clean_error(form_bytes, files, caplog, kind):
+    credentials = {"pkcs12": files["p12"]} if kind == "p12" else {"key": files["key"], "cert": files["cert"]}
+    with pytest.raises(SigningError, match="Could not load.*(password|decrypt)"):
+        sign_pdf(form_bytes, passphrase="wrong", **credentials)
+    assert not [r for r in caplog.records if r.exc_info]  # pyHanko did not log a traceback on the side
 
 
 def test_missing_passphrase(form_bytes, files):
     with pytest.raises(SigningError, match="Could not load"):
         sign_pdf(form_bytes, pkcs12=files["p12"])
+
+
+def test_a_needless_passphrase_is_ignored(form_bytes, files, identity):
+    check(sign_pdf(form_bytes, key=files["key_plain"], cert=files["cert"], passphrase="unused"), identity[1])
+    check(sign_pdf(form_bytes, pkcs12=files["p12_plain"], passphrase="unused"), identity[1])
 
 
 @pytest.mark.parametrize(
@@ -276,10 +371,31 @@ def test_cli_sign_can_prompt_for_the_passphrase(cli, form_path, files, identity,
     check(out.read_bytes(), identity[1])
 
 
-def test_cli_sign_reports_a_wrong_passphrase_cleanly(cli, form_path, files, tmp_path):
+def test_cli_sign_reports_a_wrong_passphrase_cleanly(cli, form_path, files, tmp_path, caplog):
     result = cli("sign", form_path, "--p12", files["p12"], "-o", tmp_path / "o.pdf", env={"PDFFORM_PASSPHRASE": "nope"})
     assert result.exit_code == 2
     assert "Could not load" in result.output
+    assert "Traceback" not in result.output
+    assert not [r for r in caplog.records if r.exc_info]
+    assert not (tmp_path / "o.pdf").exists()
+
+
+def test_cli_an_empty_passphrase_variable_is_no_passphrase(cli, form_path, files, identity, tmp_path):
+    out = tmp_path / "signed.pdf"
+    args = ("sign", form_path, "--key", files["key_plain"], "--cert", files["cert"], "-o", out)
+    result = cli(*args, env={"PDFFORM_PASSPHRASE": ""})
+    assert result.exit_code == 0, result.output
+    check(out.read_bytes(), identity[1])
+
+
+def test_cli_stamp_refuses_a_signed_document(cli, form_path, files, tmp_path):
+    signed = tmp_path / "signed.pdf"
+    signed.write_bytes(sign_pdf(form_path, pkcs12=files["p12"], passphrase=PASSPHRASE))
+    image = tmp_path / "sig.png"
+    image.write_bytes(png_signature())
+    result = cli("stamp", signed, "--field", "Sign", "--image", image, "-o", tmp_path / "o.pdf")
+    assert result.exit_code == 2
+    assert "stamp every field before the first signature" in result.output
     assert not (tmp_path / "o.pdf").exists()
 
 
@@ -347,11 +463,40 @@ def test_cli_fill_with_flatten_signs_an_invisible_field(cli, form_path, files, i
     assert signatures[0].field_name == "Signature1"
 
 
-def test_cli_fill_signing_options_need_sign(cli, form_path, files, tmp_path):
-    result = cli("fill", form_path, "--set", "Name=Doe", "--p12", files["p12"], "-o", tmp_path / "o.pdf")
+@pytest.mark.parametrize(
+    "option",
+    [
+        ("--p12", "P12"),
+        ("--sign-field", "Sign"),
+        ("--reason", "x"),
+        ("--passphrase-file", "P12"),
+        ("--ask-passphrase",),
+    ],
+)
+def test_cli_fill_signing_options_need_sign(cli, form_path, files, tmp_path, option):
+    option = tuple(files["p12"] if part == "P12" else part for part in option)
+    result = cli("fill", form_path, "--set", "Name=Doe", *option, "-o", tmp_path / "o.pdf", input="secret\n")
     assert result.exit_code == 1
-    assert "--sign" in result.output
+    assert "only work together with --sign" in result.output
+    assert "Passphrase" not in result.output  # rejected before anyone is asked
     assert not (tmp_path / "o.pdf").exists()
+
+
+def test_cli_fill_refuses_a_sign_field_when_flattening(cli, form_path, files, tmp_path):
+    out = tmp_path / "o.pdf"
+    args = ("fill", form_path, "--set", "Name=Doe", "--flatten", "--sign", "--sign-field", "Sign")
+    result = cli(*args, "--p12", files["p12"], "-o", out, env={"PDFFORM_PASSPHRASE": PASSPHRASE})
+    assert result.exit_code == 1
+    assert "--flatten removes the form" in result.output
+    assert not out.exists()
+
+
+def test_cli_fill_with_sign_does_not_ask_viewers_to_regenerate(cli, form_path, files, tmp_path):
+    out = tmp_path / "o.pdf"
+    args = ("fill", form_path, "--set", "Name=Doe", "--sign", "--p12", files["p12"], "-o", out)
+    result = cli(*args, env={"PDFFORM_PASSPHRASE": PASSPHRASE})
+    assert result.exit_code == 0, result.output
+    assert "/NeedAppearances" not in read(out.read_bytes()).trailer["/Root"]["/AcroForm"]
 
 
 def test_cli_fill_does_not_write_an_unsigned_file_when_signing_fails(cli, form_path, files, tmp_path):

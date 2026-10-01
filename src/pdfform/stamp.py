@@ -9,7 +9,8 @@ Every source format is first turned into a form XObject. A PDF page already is
 one. A raster image becomes an image XObject drawn by a one-line content stream.
 SVG is converted to a PDF page first. The form XObject is then nested in the
 widget appearance, whose ``/BBox`` is the widget ``/Rect`` at the origin, so the
-viewer does not scale it again.
+viewer does not scale it again. A widget turned by ``/MK /R``, or sitting on a
+turned page, gets a ``/Matrix`` that turns the signature with it.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from typing import Any, Literal
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import (
     ArrayObject,
+    BooleanObject,
     DecodedStreamObject,
     DictionaryObject,
     FloatObject,
@@ -32,18 +34,36 @@ from pypdf.generic import (
 )
 
 from pdfform.extract import extract_form_and_objects, open_reader
-from pdfform.fill import _match_field, _write_out
+from pdfform.fill import _match_field, _signed_fields, _write_out
 from pdfform.flatten import IDENTITY, _floats, _format_matrix, placement_matrix
-from pdfform.model import FieldKind, FieldValueError, FormInfo, MissingDependencyError, SignatureImageError
+from pdfform.model import (
+    FieldKind,
+    FieldValueError,
+    FormInfo,
+    MissingDependencyError,
+    SignatureImageError,
+    SignedDocumentError,
+)
 
 logger = logging.getLogger(__name__)
 
 Fit = Literal["contain", "stretch"]
 
+STAMP_MARKER = NameObject("/PdfformStamp")
+"""Set on every appearance ``stamp`` writes, so ``sign`` knows to keep it."""
+
+# A page /Rotate turns the page clockwise for display. This undoes it, for a signature PDF.
 _ROTATION_MATRIX = {
     90: (0.0, -1.0, 1.0, 0.0, 0.0, 0.0),
     180: (-1.0, 0.0, 0.0, -1.0, 0.0, 0.0),
     270: (0.0, 1.0, -1.0, 0.0, 0.0, 0.0),
+}
+
+# /MK /R turns a widget appearance counterclockwise. This is its appearance /Matrix.
+_APPEARANCE_ROTATION = {
+    90: (0.0, 1.0, -1.0, 0.0, 0.0, 0.0),
+    180: (-1.0, 0.0, 0.0, -1.0, 0.0, 0.0),
+    270: (0.0, -1.0, 1.0, 0.0, 0.0, 0.0),
 }
 
 
@@ -125,16 +145,18 @@ def _form_from_svg(
     return _form_from_pdf(writer, converted)
 
 
-def _image_object(pixels: bytes, width: int, height: int, colour_space: str) -> StreamObject:
+def _image_object(
+    encoded: bytes, width: int, height: int, colour_space: str, filter_name: str = "/FlateDecode"
+) -> StreamObject:
     image = DecodedStreamObject()
-    image.set_data(zlib.compress(pixels))
+    image.set_data(encoded)
     image[NameObject("/Type")] = NameObject("/XObject")
     image[NameObject("/Subtype")] = NameObject("/Image")
     image[NameObject("/Width")] = NumberObject(width)
     image[NameObject("/Height")] = NumberObject(height)
     image[NameObject("/ColorSpace")] = NameObject(colour_space)
     image[NameObject("/BitsPerComponent")] = NumberObject(8)
-    image[NameObject("/Filter")] = NameObject("/FlateDecode")
+    image[NameObject("/Filter")] = NameObject(filter_name)
     return image
 
 
@@ -146,21 +168,28 @@ def _form_from_raster(
     try:
         picture = pil.open(io.BytesIO(data))
         picture.load()
+        # The copy exif_transpose returns has no format any more.
+        upright = picture.getexif().get(0x0112, 1) == 1  # EXIF orientation
+        plain_jpeg = picture.format == "JPEG" and picture.mode in ("L", "RGB") and upright
         picture = ops.exif_transpose(picture)
         width, height = picture.size
         has_alpha = picture.mode in ("RGBA", "LA", "PA") or "transparency" in picture.info
         grey = picture.mode in ("L", "LA")
-        if has_alpha:
+        colour_space = "/DeviceGray" if grey else "/DeviceRGB"
+        if plain_jpeg:
+            # PDF reads JPEG as is, so a photo of a signature does not grow tenfold.
+            image = _image_object(data, width, height, colour_space, "/DCTDecode")
+        elif has_alpha:
             picture = picture.convert("LA" if grey else "RGBA")
             alpha = picture.getchannel("A")
             colour = picture.convert("L" if grey else "RGB")
+            image = _image_object(zlib.compress(colour.tobytes()), width, height, colour_space)
+            if alpha.getextrema() != (255, 255):
+                mask = _image_object(zlib.compress(alpha.tobytes()), width, height, "/DeviceGray")
+                image[NameObject("/SMask")] = writer._add_object(mask)
         else:
-            alpha = None
             colour = picture.convert("L" if grey else "RGB")
-        image = _image_object(colour.tobytes(), width, height, "/DeviceGray" if grey else "/DeviceRGB")
-        if alpha is not None and alpha.getextrema() != (255, 255):
-            mask = _image_object(alpha.tobytes(), width, height, "/DeviceGray")
-            image[NameObject("/SMask")] = writer._add_object(mask)
+            image = _image_object(zlib.compress(colour.tobytes()), width, height, colour_space)
     except Exception as exc:
         raise SignatureImageError(f"Could not read the signature image: {exc}") from exc
 
@@ -206,6 +235,39 @@ def _target(
     return (left, bottom, left + fitted_width, bottom + fitted_height)
 
 
+def _page_rotation(writer: PdfWriter, widget: DictionaryObject) -> int:
+    """The inherited ``/Rotate`` of the page that shows *widget*."""
+    owner = widget.get("/P")
+    ref = widget.indirect_reference
+    for page in writer.pages:
+        page_ref = page.indirect_reference
+        if owner is not None:
+            if page_ref is None or getattr(owner, "idnum", None) != page_ref.idnum:
+                continue
+        elif ref is None or not any(getattr(a, "idnum", None) == ref.idnum for a in page.get("/Annots") or []):
+            continue
+        node: Any = page
+        while node is not None:
+            node = node.get_object()
+            if "/Rotate" in node:
+                return int(node["/Rotate"]) % 360
+            node = node.get("/Parent")
+        return 0
+    return 0
+
+
+def _widget_rotation(writer: PdfWriter, widget: DictionaryObject) -> int:
+    """How far the appearance of *widget* is turned counterclockwise, in degrees.
+
+    ``/MK /R`` says so. Without it, the rotation of the page is used, so the
+    signature is upright on a page that is displayed turned.
+    """
+    characteristics = widget.get("/MK")
+    if characteristics is not None and characteristics.get_object().get("/R") is not None:
+        return int(characteristics.get_object()["/R"]) % 360
+    return _page_rotation(writer, widget)
+
+
 def stamp_signature(
     source: Any,
     field: str,
@@ -226,11 +288,15 @@ def stamp_signature(
         fit: ``contain`` keeps the aspect ratio and centres the image in the field.
             ``stretch`` fills the field and distorts the image to do so.
 
+    A signed document is refused. Stamping rewrites the file, which breaks every
+    signature in it, so stamp all fields before the first signature.
+
     Raises:
         UnknownFieldError: *field* names no field.
         FieldValueError: *field* is not a signature field, or has no widget with an area.
         SignatureImageError: The image could not be read.
         MissingDependencyError: The optional dependency for the image format is missing.
+        SignedDocumentError: The document already carries a signature.
     """
     writer = PdfWriter(clone_from=open_reader(source))
     info, objects = extract_form_and_objects(writer)
@@ -254,6 +320,12 @@ def apply_stamp(
     """
     if fit not in ("contain", "stretch"):
         raise FieldValueError(f"fit must be 'contain' or 'stretch', got {fit!r}")
+    signed = _signed_fields(info)
+    if signed:
+        raise SignedDocumentError(
+            f"The document is signed ({', '.join(signed)}). Stamping rewrites it and breaks the signature, "
+            "so stamp every field before the first signature"
+        )
     data = image if isinstance(image, bytes) else Path(image).read_bytes()
 
     target = _match_field(field, info, {f.name: f for f in info.fields})
@@ -271,15 +343,22 @@ def apply_stamp(
         width, height = abs(rect[2] - rect[0]), abs(rect[3] - rect[1])
         if width <= 0 or height <= 0:
             continue
+        # On a turned widget, the appearance is drawn upright and the /Matrix turns it onto the /Rect.
+        rotation = _widget_rotation(writer, widget)
+        if rotation in (90, 270):
+            width, height = height, width
         placement = placement_matrix(bbox, matrix, _target(width, height, bbox, matrix, fit))
         appearance = DecodedStreamObject()
         appearance.set_data(f"q {_format_matrix(placement)} cm /Sig Do Q".encode("ascii"))
         appearance[NameObject("/Type")] = NameObject("/XObject")
         appearance[NameObject("/Subtype")] = NameObject("/Form")
         appearance[NameObject("/BBox")] = _box((0, 0, width, height))
+        if rotation in _APPEARANCE_ROTATION:
+            appearance[NameObject("/Matrix")] = _box(_APPEARANCE_ROTATION[rotation])
         appearance[NameObject("/Resources")] = DictionaryObject(
             {NameObject("/XObject"): DictionaryObject({NameObject("/Sig"): form_ref})}
         )
+        appearance[STAMP_MARKER] = BooleanObject(True)
         widget[NameObject("/AP")] = DictionaryObject({NameObject("/N"): writer._add_object(appearance)})
         stamped += 1
 
