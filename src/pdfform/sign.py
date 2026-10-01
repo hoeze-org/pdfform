@@ -20,6 +20,7 @@ from typing import Any
 from pdfform.extract import extract_form_and_objects, open_pdf
 from pdfform.fill import _match_field, _signed_fields
 from pdfform.model import FieldKind, MissingDependencyError, SigningError
+from pdfform.position import Rect, Units, page_rect
 from pdfform.stamp import STAMP_MARKER
 
 logger = logging.getLogger(__name__)
@@ -123,6 +124,9 @@ def sign_pdf(
     reason: str | None = None,
     location: str | None = None,
     contact: str | None = None,
+    page: int | None = None,
+    rect: Rect | None = None,
+    units: Units = "pt",
 ) -> bytes:
     """Sign a PDF with a certificate and return the signed document as bytes.
 
@@ -139,15 +143,23 @@ def sign_pdf(
             new invisible ``Signature1`` (or ``Signature2``, and so on, if taken).
             Several unsigned fields are an error. A signature image placed with
             ``stamp`` stays visible. Any other field gets pyHanko's text appearance.
+            With *page* and *rect*, the name of the new field, ``Signature1`` by default.
         reason: Why the document is signed. Shown by viewers.
         location: Where it was signed.
         contact: How to reach the signer.
+        page: Index of the page, starting at 0, for a new visible signature field.
+            Needs *rect*. This works on a signed document too, unlike ``stamp``.
+        rect: Where the new field goes, as two opposite corners ``(x1, y1, x2, y2)``.
+        units: ``pt`` for PDF user space, from the bottom left. ``mm`` for
+            millimetres from the top left of the page as shown.
 
     Raises:
         MissingDependencyError: pyHanko is not installed.
         UnknownFieldError: *field* names no field, or is ambiguous.
+        FieldValueError: The page does not exist, or the rectangle is not on it.
         SigningError: The key could not be loaded, *field* is not a signature field
             or is signed already, several fields are unsigned, or pyHanko refused to sign.
+            With *page* and *rect*: *field* exists already.
     """
     try:
         from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
@@ -160,11 +172,24 @@ def sign_pdf(
     data = source if isinstance(source, bytes) else Path(source).read_bytes()
     signer = _load_signer(signers, pkcs12, key, cert, chain, _passphrase(passphrase))
 
-    info, objects = extract_form_and_objects(open_pdf(data))
+    doc = open_pdf(data)
+    info, objects = extract_form_and_objects(doc)
     already_signed = set(_signed_fields(info))
     unsigned = [f for f in info.fields if f.kind is FieldKind.SIGNATURE and f.name not in already_signed]
     new_field_spec = None
-    if field is not None:
+    if (page is None) != (rect is None):
+        raise SigningError("A new signature field needs both a page and a rectangle")
+    if page is not None and rect is not None:
+        taken = {f.name for f in info.fields}
+        name = field if field is not None else _new_field_name(taken)
+        if name in taken:
+            raise SigningError(f"{name}: exists already. Leave out the page and rectangle to sign it")
+        if not name or "." in name:
+            raise SigningError(f"{name!r} cannot name a new field. Use a name without '.'")
+        # pyHanko adds the field in the same revision as the signature, so earlier signatures stay intact.
+        box = page_rect(doc, page, rect, units)  # pyHanko types the box as ints, but writes FloatObjects
+        new_field_spec = fields.SigFieldSpec(sig_field_name=name, on_page=page, box=box)  # type: ignore[arg-type]
+    elif field is not None:
         target = _match_field(field, info, {f.name: f for f in info.fields})
         if target.kind is not FieldKind.SIGNATURE:
             raise SigningError(f"{target.name}: is a {target.kind.value} field, only signature fields can be signed")

@@ -11,7 +11,7 @@ There is no single library that reads an AcroForm, describes it as a schema, and
 - **Correct button handling.** Check box on-states are read per widget, not assumed to be `Yes`, and both `/V` and `/AS` are written.
 - **Flattening** that bakes the appearance streams into the page content using the placement algorithm from the PDF spec, rather than only translating them.
 - **XFA awareness.** Static and dynamic XFA are told apart, static XFA layers can be dropped (the `pdftk drop_xfa` equivalent), and dynamic XFA fails loudly instead of producing an empty schema.
-- **Signature images.** `stamp` draws a PDF, PNG, JPEG or SVG signature into a signature field.
+- **Signature images.** `stamp` draws a PDF, PNG, JPEG or SVG signature into a signature field, or into a new one at a place on the page.
 - **Cryptographic signing.** `sign` signs the document with a certificate, as a separate step.
 - **Label inference.** Optional best-effort guessing of what a field called `Text12` actually means, from the text printed next to it.
 
@@ -181,6 +181,19 @@ pdfform fill form.pdf -d data.json --stamp Antragsteller_Unterschrift=signature.
 
 With `--flatten` the stamped image is baked into the page before signing. The signature then goes into a new invisible `Signature1`, because flattening removes the form, so `--sign-field` is refused. With `--sign`, `fill` does not set `/NeedAppearances`, because a viewer that regenerates appearances would change the signed file. The appearances `fill` generates itself stay.
 
+**Signing where there is no field.** `--page` and `--rect` put a new signature field on a page, for a plain document or a form whose field is in the wrong place. `--rect` takes two opposite corners. Plain numbers are PDF points (1/72 inch) from the bottom left, the same numbers a `/Rect` holds. With `mm`, the corners are millimetres from the top left of the page as shown, which is what a ruler on a printout gives. Pages count from 1.
+
+```bash
+# draw the image into a new field, then sign it: it is the only unsigned one
+pdfform stamp letter.pdf --field Unterschrift --page 2 --rect 18mm,230mm,88mm,250mm --image signature.png -o stamped.pdf
+pdfform sign stamped.pdf --p12 me.p12 -o signed.pdf
+
+# or sign into a new visible field directly, with pyHanko's text appearance
+pdfform sign letter.pdf --p12 me.p12 --page 2 --rect 18mm,230mm,88mm,250mm -o signed.pdf
+```
+
+`sign` adds the new field in the same incremental update as the signature, so this also works for a second signer on a document that is signed already. `stamp` refuses a signed document, as above.
+
 In Python:
 
 ```python
@@ -192,6 +205,9 @@ sign_pdf(stamped, "signed.pdf", pkcs12="me.p12", passphrase="...", field="Antrag
 # or fill and stamp in one pass, then sign
 filled = fill_form("form.pdf", data, stamp={"Antragsteller_Unterschrift": "signature.png"})
 sign_pdf(filled, "signed.pdf", pkcs12="me.p12", passphrase="...", field="Antragsteller_Unterschrift")
+
+# a new field at a place: page is an index from 0 here, as in FormField.pages
+stamped = stamp_signature("letter.pdf", "Unterschrift", "signature.png", page=1, rect=(18, 230, 88, 250), units="mm")
 ```
 
 ## Development
