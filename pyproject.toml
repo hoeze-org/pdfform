@@ -22,6 +22,12 @@ dependencies = [
 [project.scripts]
 pdfform = "pdfform.cli:main_cli"
 
+[project.optional-dependencies]
+stamp = [
+    "pillow>=10",
+    "svglib>=1.5",
+]
+
 [dependency-groups]
 dev = [
     "tox>=4",
@@ -66,6 +72,7 @@ isolated_build = true
 runner = "uv-venv-lock-runner"
 description = "run unit tests"
 dependency_groups = ["test"]
+extras = ["stamp"]
 commands = [["pytest", { replace = "posargs", default = ["tests"], extend = true }]]
 
 [tool.tox.env."format-check"]

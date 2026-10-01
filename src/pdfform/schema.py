@@ -13,7 +13,7 @@ dropdown         ``{"type": "string", "enum": [...]}``, or free string when
                  the combo box is editable (``/Ff`` bit 19)
 list box         same as dropdown; an array when multi-select is set
 push button      omitted, it holds no value
-signature        omitted by default, it cannot be filled with a value
+signature        omitted by default, it takes no value (see ``pdfform stamp``)
 ===============  ===========================================================
 
 Everything needed to write the value back - the field kind, its on-state, the
@@ -175,8 +175,9 @@ def build_schema(
         nested: Split dot-separated field names into nested objects.
         include_read_only: Also emit read-only fields. They are described but
             cannot be filled.
-        include_signatures: Also emit signature fields. ``pdfform`` cannot sign,
-            so they are left out unless asked for.
+        include_signatures: Also emit signature fields. They take no value,
+            ``stamp`` acts on them instead, so they are left out
+            unless asked for.
         title: Overrides the schema title.
 
     Raises:

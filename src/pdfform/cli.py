@@ -14,6 +14,7 @@ from pdfform.extract import extract_form, get_acroform, open_pdf
 from pdfform.fill import fill_form, flatten_values, strip_xfa_layer
 from pdfform.model import OFF_STATE, FieldKind, FormInfo, PdfFormError, XfaKind
 from pdfform.schema import build_schema, current_values, validate_values
+from pdfform.stamp import stamp_signature
 from pdfform.xfa import xfa_packets
 
 logger = logging.getLogger("pdfform")
@@ -73,6 +74,7 @@ def main_cli(verbose: int) -> None:
       pdfform schema form.pdf -o schema.json      # derive a JSON Schema
       pdfform values form.pdf -o data.json        # start from the current values
       pdfform fill form.pdf -d data.json -o out.pdf
+      pdfform stamp out.pdf --field Sign --image signature.png -o stamped.pdf
     """
     _configure_logging(verbose)
 
@@ -341,6 +343,38 @@ def strip_xfa_command(pdf: Path, output: Path) -> None:
             err=True,
         )
     strip_xfa_layer(pdf, output)
+    click.echo(f"Wrote {output}", err=True)
+
+
+@main_cli.command()
+@click.argument("pdf", type=PDF_ARG)
+@click.option("--field", "field_name", required=True, metavar="NAME", help="The signature field to draw into.")
+@click.option(
+    "--image",
+    required=True,
+    type=PDF_ARG,
+    help="The signature as PDF, PNG, JPEG or SVG. Only the first page of a PDF is used.",
+)
+@click.option("-o", "--output", type=OUT_OPT, required=True, help="Where to write the stamped PDF.")
+@click.option(
+    "--fit",
+    type=click.Choice(["contain", "stretch"]),
+    default="contain",
+    show_default=True,
+    help="contain keeps the aspect ratio and centres the image, stretch fills the field.",
+)
+def stamp(pdf: Path, field_name: str, image: Path, output: Path, fit: str) -> None:
+    """Draw a signature image into a signature field of PDF.
+
+    This only makes the field look signed. It is not a cryptographic signature,
+    a signature field still takes no value. The image becomes the field's
+    appearance, so `fill --flatten` bakes it into the page.
+    PNG, JPEG and SVG need `pip install 'pdfform[stamp]'`.
+
+    \b
+      pdfform stamp form.pdf --field Antragsteller_Unterschrift --image sig.png -o out.pdf
+    """
+    stamp_signature(pdf, field_name, image, output, fit=fit)  # type: ignore[arg-type]
     click.echo(f"Wrote {output}", err=True)
 
 

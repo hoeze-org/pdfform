@@ -235,3 +235,11 @@ class UnknownFieldError(PdfFormError):
 
 class FieldValueError(PdfFormError):
     """Raised when a value does not fit the field it is meant to go into."""
+
+
+class SignatureImageError(PdfFormError):
+    """Raised when a signature image cannot be read or has no area to draw."""
+
+
+class MissingDependencyError(PdfFormError):
+    """Raised when an optional dependency is needed and not installed."""

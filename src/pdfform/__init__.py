@@ -19,12 +19,15 @@ from pdfform.model import (
     FieldValueError,
     FormField,
     FormInfo,
+    MissingDependencyError,
     PdfFormError,
+    SignatureImageError,
     UnknownFieldError,
     Widget,
     XfaKind,
 )
 from pdfform.schema import build_schema, current_values, field_schema, validate_values
+from pdfform.stamp import stamp_signature
 from pdfform.xfa import detect_xfa, strip_xfa, xfa_packets
 
 try:  # pragma: no cover - only missing when running from a source tree
@@ -40,7 +43,9 @@ __all__ = [
     "FieldValueError",
     "FormField",
     "FormInfo",
+    "MissingDependencyError",
     "PdfFormError",
+    "SignatureImageError",
     "UnknownFieldError",
     "Widget",
     "XfaKind",
@@ -55,6 +60,7 @@ __all__ = [
     "flatten_widgets",
     "get_acroform",
     "open_pdf",
+    "stamp_signature",
     "strip_xfa",
     "strip_xfa_layer",
     "validate_values",

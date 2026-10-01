@@ -11,8 +11,9 @@ The project uses [`uv`](https://docs.astral.sh/uv/) for dependency management.
 micromamba env create -f environment-dev.yml
 micromamba activate pdfform
 
-# Install all dependency groups (runtime + dev + test + lint) into a uv-managed venv
-uv sync --all-groups
+# Install all dependency groups (runtime + dev + test + lint) and the optional
+# extra (stamp) into a uv-managed venv
+uv sync --all-groups --all-extras
 ```
 
 All subsequent commands assume the env is activated and `uv` is on `PATH`.
@@ -64,6 +65,8 @@ The test forms are built by hand in `tests/formbuilder.py` from `pypdf` primitiv
 `tests/formbuilder.py` is on the test `pythonpath`, so test modules import from it directly. Fixtures wrapping it live in `tests/conftest.py`.
 
 When adding support for a construct, add it to `build_form` rather than creating a one-off document, so the whole suite exercises it.
+
+The tests for `stamp` skip themselves when its optional dependencies are missing. `tox` installs the extra, so CI runs them.
 
 ## Releases
 

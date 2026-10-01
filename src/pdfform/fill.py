@@ -266,7 +266,7 @@ def fill_form(
             logger.warning("%s; skipping", message)
             continue
         if field.kind is FieldKind.SIGNATURE:
-            message = f"{field.name}: signature fields cannot be filled with a value"
+            message = f"{field.name}: signature fields cannot be filled with a value, use stamp_signature"
             if strict:
                 raise FieldValueError(message)
             logger.warning("%s; skipping", message)
