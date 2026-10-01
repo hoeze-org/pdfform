@@ -467,9 +467,51 @@ def strip_xfa_command(pdf: Path, output: Path) -> None:
     click.echo(f"Wrote {output}", err=True)
 
 
+def _placement_options(command: Any) -> Any:
+    """The --page and --rect options that put a new signature field on a page."""
+    options = [
+        click.option("--page", type=click.IntRange(min=1), help="Page of a new signature field, counted from 1."),
+        click.option(
+            "--rect",
+            metavar="X1,Y1,X2,Y2",
+            help="Two opposite corners of a new signature field. Plain numbers are PDF points from the "
+            "bottom left. With mm, millimetres from the top left of the page as shown, "
+            "for example 18mm,30mm,88mm,44mm. Needs --page.",
+        ),
+    ]
+    for option in reversed(options):
+        command = option(command)
+    return command
+
+
+def _placement(page: int | None, rect: str | None) -> dict[str, Any]:
+    """The page, rect and units arguments for stamp_signature and sign_pdf."""
+    if page is None and rect is None:
+        return {}
+    if page is None or rect is None:
+        raise click.ClickException("--page and --rect go together.")
+    parts = [part.strip().lower() for part in rect.split(",")]
+    if len(parts) != 4:
+        raise click.ClickException(f"--rect expects X1,Y1,X2,Y2, got {rect!r}")
+    units = {"mm" if part.endswith("mm") else "pt" for part in parts}
+    if len(units) != 1:
+        raise click.ClickException(f"--rect: give all four values in mm, or none, got {rect!r}")
+    try:
+        values = tuple(float(part.removesuffix("mm").removesuffix("pt")) for part in parts)
+    except ValueError as exc:
+        raise click.ClickException(f"--rect expects four numbers, got {rect!r}") from exc
+    return {"page": page - 1, "rect": values, "units": units.pop()}
+
+
 @main_cli.command()
 @click.argument("pdf", type=PDF_ARG)
-@click.option("--field", "field_name", required=True, metavar="NAME", help="The signature field to draw into.")
+@click.option(
+    "--field",
+    "field_name",
+    required=True,
+    metavar="NAME",
+    help="The signature field to draw into. With --page and --rect, the name of the new field.",
+)
 @click.option(
     "--image",
     required=True,
@@ -484,7 +526,8 @@ def strip_xfa_command(pdf: Path, output: Path) -> None:
     show_default=True,
     help="contain keeps the aspect ratio and centres the image, stretch fills the field.",
 )
-def stamp(pdf: Path, field_name: str, image: Path, output: Path, fit: str) -> None:
+@_placement_options
+def stamp(pdf: Path, field_name: str, image: Path, output: Path, fit: str, page: int | None, rect: str | None) -> None:
     """Draw a signature image into a signature field of PDF.
 
     This only makes the field look signed. It is not a cryptographic signature,
@@ -492,21 +535,32 @@ def stamp(pdf: Path, field_name: str, image: Path, output: Path, fit: str) -> No
     `fill --flatten` bakes it into the page and `sign` keeps it visible.
     PNG, JPEG and SVG need `pip install 'pdfform[stamp]'`.
 
+    Without a signature field in the right place, --page and --rect make a new
+    one. `sign` then signs it, because it is the only unsigned one.
+
     A signed document is refused, because stamping would break the signature.
     Stamp every field before the first signature.
 
     \b
       pdfform stamp form.pdf --field Antragsteller_Unterschrift --image sig.png -o out.pdf
+      pdfform stamp letter.pdf --field Unterschrift --page 2 --rect 18mm,230mm,88mm,250mm \\
+          --image sig.png -o out.pdf
     """
-    stamp_signature(pdf, field_name, image, output, fit=fit)  # type: ignore[arg-type]
+    stamp_signature(pdf, field_name, image, output, fit=fit, **_placement(page, rect))  # type: ignore[arg-type]
     click.echo(f"Wrote {output}", err=True)
 
 
 @main_cli.command()
 @click.argument("pdf", type=PDF_ARG)
-@click.option("--field", "field_name", metavar="NAME", help="The signature field to sign. See below for the default.")
+@click.option(
+    "--field",
+    "field_name",
+    metavar="NAME",
+    help="The signature field to sign. See below for the default. With --page and --rect, the name of the new field.",
+)
 @click.option("-o", "--output", type=OUT_OPT, required=True, help="Where to write the signed PDF.")
 @_signing_options
+@_placement_options
 def sign(
     pdf: Path,
     p12: Path | None,
@@ -518,6 +572,8 @@ def sign(
     reason: str | None,
     location: str | None,
     contact: str | None,
+    page: int | None,
+    rect: str | None,
     field_name: str | None,
     output: Path,
 ) -> None:
@@ -526,7 +582,8 @@ def sign(
     A form with one unsigned signature field signs that field. A document
     without one gets a new invisible `Signature1`, or `Signature2` if that is
     taken. With several, pick one with --field. A signature image placed with
-    `pdfform stamp` stays visible.
+    `pdfform stamp` stays visible. --page and --rect make a new visible field
+    instead, which also works on a document that is signed already.
 
     Sign last. Any change afterwards, `fill` included, breaks the signature.
     Needs `pip install 'pdfform[sign]'`. The passphrase is never a command line
@@ -535,9 +592,11 @@ def sign(
     \b
       pdfform sign form.pdf --p12 me.p12 --field Antragsteller_Unterschrift -o signed.pdf
       pdfform sign form.pdf --key key.pem --cert cert.pem --ask-passphrase -o signed.pdf
+      pdfform sign letter.pdf --p12 me.p12 --page 2 --rect 18mm,230mm,88mm,250mm -o signed.pdf
     """
+    placement = _placement(page, rect)
     signing = _signing_arguments(p12, key, cert, chain, passphrase_file, ask_passphrase, reason, location, contact)
-    sign_pdf(pdf, output, field=field_name, **signing)
+    sign_pdf(pdf, output, field=field_name, **signing, **placement)
     click.echo(f"Wrote {output}", err=True)
 
 

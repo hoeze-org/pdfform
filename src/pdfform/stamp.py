@@ -44,6 +44,7 @@ from pdfform.model import (
     SignatureImageError,
     SignedDocumentError,
 )
+from pdfform.position import Rect, Units, add_signature_field, page_rect, page_rotation
 
 logger = logging.getLogger(__name__)
 
@@ -246,13 +247,7 @@ def _page_rotation(writer: PdfWriter, widget: DictionaryObject) -> int:
                 continue
         elif ref is None or not any(getattr(a, "idnum", None) == ref.idnum for a in page.get("/Annots") or []):
             continue
-        node: Any = page
-        while node is not None:
-            node = node.get_object()
-            if "/Rotate" in node:
-                return int(node["/Rotate"]) % 360
-            node = node.get("/Parent")
-        return 0
+        return page_rotation(page)
     return 0
 
 
@@ -275,18 +270,26 @@ def stamp_signature(
     output: Any = None,
     *,
     fit: Fit = "contain",
+    page: int | None = None,
+    rect: Rect | None = None,
+    units: Units = "pt",
 ) -> bytes:
     """Draw a signature image into a signature field and return the document as bytes.
 
     Args:
         source: Path, bytes, or an open ``PdfReader`` of the form.
         field: Name of the signature field. A partial name works when it is unambiguous.
+            With *page* and *rect*, the name of the new field.
         image: Path or bytes of a PDF, PNG, JPEG or SVG. The format is detected from
             the content. For a PDF, only the first page is used. Raster formats need
             ``pdfform[stamp]``, as does SVG.
         output: Optional path or writable binary stream. The bytes are returned either way.
         fit: ``contain`` keeps the aspect ratio and centres the image in the field.
             ``stretch`` fills the field and distorts the image to do so.
+        page: Index of the page, starting at 0, for a new signature field. Needs *rect*.
+        rect: Where the new field goes, as two opposite corners ``(x1, y1, x2, y2)``.
+        units: ``pt`` for PDF user space, from the bottom left. ``mm`` for
+            millimetres from the top left of the page as shown.
 
     A signed document is refused. Stamping rewrites the file, which breaks every
     signature in it, so stamp all fields before the first signature.
@@ -294,12 +297,20 @@ def stamp_signature(
     Raises:
         UnknownFieldError: *field* names no field.
         FieldValueError: *field* is not a signature field, or has no widget with an area.
+            With *page* and *rect*: *field* exists already, or the rectangle is not on the page.
         SignatureImageError: The image could not be read.
         MissingDependencyError: The optional dependency for the image format is missing.
         SignedDocumentError: The document already carries a signature.
     """
     writer = PdfWriter(clone_from=open_reader(source))
     info, objects = extract_form_and_objects(writer)
+    if (page is None) != (rect is None):
+        raise FieldValueError("A new signature field needs both a page and a rectangle")
+    if page is not None and rect is not None:
+        if any(f.name == field for f in info.fields):
+            raise FieldValueError(f"{field}: exists already. Leave out the page and rectangle to stamp it")
+        add_signature_field(writer, field, page, page_rect(writer, page, rect, units))
+        info, objects = extract_form_and_objects(writer)
     apply_stamp(writer, info, objects, field, image, fit=fit)
     return _write_out(writer, output)
 

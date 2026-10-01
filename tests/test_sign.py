@@ -515,3 +515,71 @@ def test_cli_fill_does_not_write_an_unsigned_file_when_signing_fails(cli, form_p
     )
     assert result.exit_code == 2
     assert not out.exists()
+
+
+def test_sign_makes_a_visible_field_at_a_place(no_form_bytes, files, identity):
+    signed = sign_pdf(no_form_bytes, pkcs12=files["p12"], passphrase=PASSPHRASE, page=0, rect=(20, 20, 120, 60))
+    signatures, _ = check(signed, identity[1])
+    assert signatures[0].field_name == "Signature1"
+    widget = field_dict(signed, "Signature1")
+    assert [float(v) for v in widget["/Rect"]] == [20, 20, 120, 60]
+    assert widget.raw_get("/P").idnum == read(signed).pages[0].indirect_reference.idnum
+    assert widget["/AP"]["/N"].get_data()  # pyHanko's text appearance
+
+
+def test_sign_names_the_new_field_and_takes_millimetres(form_bytes, files, identity):
+    signed = sign_pdf(
+        form_bytes, pkcs12=files["p12"], passphrase=PASSPHRASE,
+        field="Unterschrift", page=1, rect=(18, 230, 88, 250), units="mm",
+    )  # fmt: skip
+    signatures, _ = check(signed, identity[1])
+    assert signatures[0].field_name == "Unterschrift"
+    assert "/V" not in field_dict(signed, "Sign")  # the existing field stays unsigned
+
+
+def test_a_second_signer_places_a_new_field_on_a_signed_document(no_form_bytes, files, identity):
+    once = sign_pdf(no_form_bytes, pkcs12=files["p12"], passphrase=PASSPHRASE, page=0, rect=(20, 20, 120, 60))
+    twice = sign_pdf(once, pkcs12=files["p12"], passphrase=PASSPHRASE, field="Second", page=0, rect=(20, 100, 120, 140))
+    signatures, _ = check(twice, identity[1], count=2)  # with pyHanko's diff analysis: the first stays intact
+    assert [s.field_name for s in signatures] == ["Signature1", "Second"]
+
+
+def test_stamp_at_a_place_then_sign_keeps_the_image(no_form_bytes, files, identity):
+    stamped = stamp_signature(no_form_bytes, "Unterschrift", png_signature(), page=0, rect=(20, 20, 120, 60))
+    before = field_dict(stamped, "Unterschrift")["/AP"]["/N"].get_data()
+    signed = sign_pdf(stamped, pkcs12=files["p12"], passphrase=PASSPHRASE)
+    signatures, _ = check(signed, identity[1])
+    assert signatures[0].field_name == "Unterschrift"
+    assert field_dict(signed, "Unterschrift")["/AP"]["/N"].get_data() == before
+
+
+def test_sign_refuses_to_make_a_field_that_exists(form_bytes, files):
+    with pytest.raises(SigningError, match="exists already"):
+        sign_pdf(form_bytes, pkcs12=files["p12"], passphrase=PASSPHRASE, field="Sign", page=1, rect=(1, 1, 9, 9))
+
+
+def test_sign_needs_page_and_rect_together(form_bytes, files):
+    with pytest.raises(SigningError, match="both a page and a rectangle"):
+        sign_pdf(form_bytes, pkcs12=files["p12"], passphrase=PASSPHRASE, page=1)
+
+
+def test_cli_sign_at_a_place(cli, form_path, files, identity, tmp_path):
+    out = tmp_path / "signed.pdf"
+    result = cli(
+        "sign", form_path, "--p12", files["p12"], "--field", "Unterschrift",
+        "--page", "2", "--rect", "18mm,230mm,88mm,250mm", "-o", out,
+        env={"PDFFORM_PASSPHRASE": PASSPHRASE},
+    )  # fmt: skip
+    assert result.exit_code == 0, result.output
+    signatures, _ = check(out.read_bytes(), identity[1])
+    assert signatures[0].field_name == "Unterschrift"
+
+
+def test_cli_sign_checks_the_place_before_asking_for_the_passphrase(cli, form_path, files, tmp_path):
+    result = cli(
+        "sign", form_path, "--p12", files["p12"], "--page", "2", "--ask-passphrase", "-o", tmp_path / "o.pdf",
+        input="secret\n",
+    )  # fmt: skip
+    assert result.exit_code == 1
+    assert "--page and --rect go together" in result.output
+    assert "Passphrase" not in result.output
