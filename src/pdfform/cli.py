@@ -200,6 +200,69 @@ def values(pdf: Path, output: Path | None, include_empty: bool, include_read_onl
     _emit(payload, output, indent)
 
 
+def _signing_options(command: Any) -> Any:
+    """The credential and metadata options that `sign` and `fill --sign` share."""
+    options = [
+        click.option("--p12", type=PDF_ARG, help="PKCS#12 file (.p12, .pfx) with the key and certificate."),
+        click.option("--key", type=PDF_ARG, help="PEM private key. Needs --cert."),
+        click.option("--cert", type=PDF_ARG, help="PEM certificate of the signer."),
+        click.option("--chain", type=PDF_ARG, multiple=True, help="PEM certificate of an intermediate. Repeatable."),
+        click.option(
+            "--passphrase-file",
+            type=PDF_ARG,
+            help="File holding the passphrase of the key. The PDFFORM_PASSPHRASE environment variable works too.",
+        ),
+        click.option("--ask-passphrase", is_flag=True, help="Prompt for the passphrase of the key."),
+        click.option("--reason", help="Why the document is signed."),
+        click.option("--location", help="Where it was signed."),
+        click.option("--contact", help="How to reach the signer."),
+    ]
+    for option in reversed(options):
+        command = option(command)
+    return command
+
+
+def _signing_arguments(
+    p12: Path | None,
+    key: Path | None,
+    cert: Path | None,
+    chain: tuple[Path, ...],
+    passphrase_file: Path | None,
+    ask_passphrase: bool,
+    reason: str | None,
+    location: str | None,
+    contact: str | None,
+) -> dict[str, Any]:
+    passphrase: str | None = os.environ.get("PDFFORM_PASSPHRASE")
+    if passphrase_file is not None:
+        passphrase = passphrase_file.read_text(encoding="utf-8").rstrip("\r\n")
+    if ask_passphrase:
+        passphrase = click.prompt("Passphrase", hide_input=True, err=True)
+    return {
+        "pkcs12": p12,
+        "key": key,
+        "cert": cert,
+        "chain": chain,
+        "passphrase": passphrase,
+        "reason": reason,
+        "location": location,
+        "contact": contact,
+    }
+
+
+def _parse_stamps(stamps: tuple[str, ...]) -> dict[str, Path]:
+    parsed: dict[str, Path] = {}
+    for item in stamps:
+        name, separator, image = item.rpartition("=")
+        if not separator or not name:
+            raise click.ClickException(f"--stamp expects FIELD=IMAGE, got {item!r}")
+        path = Path(image)
+        if not path.is_file():
+            raise click.ClickException(f"--stamp: {image!r} is not a file")
+        parsed[name] = path
+    return parsed
+
+
 @main_cli.command()
 @click.argument("pdf", type=PDF_ARG)
 @click.option(
@@ -230,6 +293,23 @@ def values(pdf: Path, output: Path | None, include_empty: bool, include_read_onl
     help="Drop the XFA layer. The default drops it only for static XFA forms.",
 )
 @click.option("--validate", "check", is_flag=True, help="Validate the values against the derived schema first.")
+@click.option(
+    "--stamp",
+    "stamps",
+    multiple=True,
+    metavar="FIELD=IMAGE",
+    help="Draw a signature image (PDF, PNG, JPEG or SVG) into a signature field. Repeatable.",
+)
+@click.option(
+    "--stamp-fit",
+    type=click.Choice(["contain", "stretch"]),
+    default="contain",
+    show_default=True,
+    help="How --stamp images fit their field.",
+)
+@click.option("--sign", "do_sign", is_flag=True, help="Sign the result with a certificate, as the very last step.")
+@click.option("--sign-field", metavar="NAME", help="The signature field --sign signs. Needed with several fields.")
+@_signing_options
 def fill(
     pdf: Path,
     data: Path | None,
@@ -240,6 +320,19 @@ def fill(
     need_appearances: bool,
     strip_xfa: bool | None,
     check: bool,
+    stamps: tuple[str, ...],
+    stamp_fit: str,
+    do_sign: bool,
+    sign_field: str | None,
+    p12: Path | None,
+    key: Path | None,
+    cert: Path | None,
+    chain: tuple[Path, ...],
+    passphrase_file: Path | None,
+    ask_passphrase: bool,
+    reason: str | None,
+    location: str | None,
+    contact: str | None,
 ) -> None:
     """Fill the form in PDF and write the result to --output.
 
@@ -248,6 +341,12 @@ def fill(
       pdfform fill form.pdf --set Name=Doe --set Agreed=true -o out.pdf
       pdfform fill form.pdf -d values.json -o out.pdf
       cat values.json | pdfform fill form.pdf -d - -o out.pdf
+
+    \b
+    Fill, stamp and sign in one go. The order is fixed: values, stamps, then the
+    signature, which has to be last because any later change breaks it.
+      pdfform fill form.pdf -d values.json --stamp Unterschrift=sig.png \\
+          --sign --p12 me.p12 --sign-field Unterschrift -o out.pdf
     """
     payload: dict[str, Any] = _load_values(data) if data is not None else {}
     for assignment in assignments:
@@ -256,8 +355,15 @@ def fill(
             raise click.ClickException(f"--set expects NAME=VALUE, got {assignment!r}")
         payload[name] = _parse_scalar(value)
 
-    if not payload:
-        raise click.ClickException("No values given. Use --data and/or --set.")
+    stamp_images = _parse_stamps(stamps)
+    signing = _signing_arguments(p12, key, cert, chain, passphrase_file, ask_passphrase, reason, location, contact)
+    if not do_sign and (
+        sign_field is not None
+        or any(signing[k] for k in ("pkcs12", "key", "cert", "chain", "reason", "location", "contact"))
+    ):
+        raise click.ClickException("Key, certificate and signature options only work together with --sign.")
+    if not (payload or stamp_images or do_sign):
+        raise click.ClickException("No values given. Use --data, --set, --stamp and/or --sign.")
 
     if check:
         problems = validate_values(build_schema(extract_form(pdf)), flatten_values(payload))
@@ -266,15 +372,19 @@ def fill(
                 click.echo(problem, err=True)
             raise click.ClickException(f"{len(problems)} value(s) do not match the schema; nothing was written.")
 
-    fill_form(
+    filled = fill_form(
         pdf,
         payload,
-        output,
+        None if do_sign else output,
         flatten=flatten,
         need_appearances=need_appearances,
         strict=strict,
         strip_xfa=strip_xfa,
+        stamp=stamp_images,  # type: ignore[arg-type]
+        stamp_fit=stamp_fit,
     )
+    if do_sign:
+        sign_pdf(filled, output, field=sign_field, **signing)
     click.echo(f"Wrote {output}", err=True)
 
 
@@ -383,21 +493,9 @@ def stamp(pdf: Path, field_name: str, image: Path, output: Path, fit: str) -> No
 
 @main_cli.command()
 @click.argument("pdf", type=PDF_ARG)
-@click.option("--p12", type=PDF_ARG, help="PKCS#12 file (.p12, .pfx) with the key and certificate.")
-@click.option("--key", type=PDF_ARG, help="PEM private key. Needs --cert.")
-@click.option("--cert", type=PDF_ARG, help="PEM certificate of the signer.")
-@click.option("--chain", type=PDF_ARG, multiple=True, help="PEM certificate of an intermediate. Repeatable.")
-@click.option(
-    "--passphrase-file",
-    type=PDF_ARG,
-    help="File holding the passphrase of the key. The PDFFORM_PASSPHRASE environment variable works too.",
-)
-@click.option("--ask-passphrase", is_flag=True, help="Prompt for the passphrase of the key.")
 @click.option("--field", "field_name", metavar="NAME", help="The signature field to sign. See below for the default.")
-@click.option("--reason", help="Why the document is signed.")
-@click.option("--location", help="Where it was signed.")
-@click.option("--contact", help="How to reach the signer.")
 @click.option("-o", "--output", type=OUT_OPT, required=True, help="Where to write the signed PDF.")
+@_signing_options
 def sign(
     pdf: Path,
     p12: Path | None,
@@ -406,10 +504,10 @@ def sign(
     chain: tuple[Path, ...],
     passphrase_file: Path | None,
     ask_passphrase: bool,
-    field_name: str | None,
     reason: str | None,
     location: str | None,
     contact: str | None,
+    field_name: str | None,
     output: Path,
 ) -> None:
     """Sign PDF with a certificate, as an incremental update.
@@ -426,24 +524,8 @@ def sign(
       pdfform sign form.pdf --p12 me.p12 --field Antragsteller_Unterschrift -o signed.pdf
       pdfform sign form.pdf --key key.pem --cert cert.pem --ask-passphrase -o signed.pdf
     """
-    passphrase: str | None = os.environ.get("PDFFORM_PASSPHRASE")
-    if passphrase_file is not None:
-        passphrase = passphrase_file.read_text(encoding="utf-8").rstrip("\r\n")
-    if ask_passphrase:
-        passphrase = click.prompt("Passphrase", hide_input=True, err=True)
-    sign_pdf(
-        pdf,
-        output,
-        pkcs12=p12,
-        key=key,
-        cert=cert,
-        chain=chain,
-        passphrase=passphrase,
-        field=field_name,
-        reason=reason,
-        location=location,
-        contact=contact,
-    )
+    signing = _signing_arguments(p12, key, cert, chain, passphrase_file, ask_passphrase, reason, location, contact)
+    sign_pdf(pdf, output, field=field_name, **signing)
     click.echo(f"Wrote {output}", err=True)
 
 

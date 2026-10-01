@@ -34,7 +34,7 @@ from pypdf.generic import (
 from pdfform.extract import extract_form_and_objects, open_reader
 from pdfform.fill import _match_field, _write_out
 from pdfform.flatten import IDENTITY, _floats, _format_matrix, placement_matrix
-from pdfform.model import FieldKind, FieldValueError, MissingDependencyError, SignatureImageError
+from pdfform.model import FieldKind, FieldValueError, FormInfo, MissingDependencyError, SignatureImageError
 
 logger = logging.getLogger(__name__)
 
@@ -232,12 +232,30 @@ def stamp_signature(
         SignatureImageError: The image could not be read.
         MissingDependencyError: The optional dependency for the image format is missing.
     """
+    writer = PdfWriter(clone_from=open_reader(source))
+    info, objects = extract_form_and_objects(writer)
+    apply_stamp(writer, info, objects, field, image, fit=fit)
+    return _write_out(writer, output)
+
+
+def apply_stamp(
+    writer: PdfWriter,
+    info: FormInfo,
+    objects: dict[str, tuple[DictionaryObject, list[DictionaryObject]]],
+    field: str,
+    image: Any,
+    *,
+    fit: Fit = "contain",
+) -> None:
+    """Stamp *field* of a document that is already open for writing.
+
+    *info* and *objects* are what :func:`~pdfform.extract.extract_form_and_objects`
+    returned for *writer*. This is what ``fill_form`` uses to stamp and fill in one pass.
+    """
     if fit not in ("contain", "stretch"):
         raise FieldValueError(f"fit must be 'contain' or 'stretch', got {fit!r}")
     data = image if isinstance(image, bytes) else Path(image).read_bytes()
 
-    writer = PdfWriter(clone_from=open_reader(source))
-    info, objects = extract_form_and_objects(writer)
     target = _match_field(field, info, {f.name: f for f in info.fields})
     if target.kind is not FieldKind.SIGNATURE:
         raise FieldValueError(f"{target.name}: is a {target.kind.value} field, only signature fields can be stamped")
@@ -268,4 +286,3 @@ def stamp_signature(
     if not stamped:
         raise FieldValueError(f"{target.name}: has no widget with an area to draw into")
     logger.info("Stamped %d widget(s) of %s", stamped, target.name)
-    return _write_out(writer, output)

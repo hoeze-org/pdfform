@@ -172,13 +172,26 @@ The passphrase is never a command line argument, so it stays out of the shell hi
 
 **Order: `fill`, then `stamp`, then `sign`.** Anything that rewrites the file afterwards, `fill` and `stamp` included, invalidates the signature. Whether a recipient trusts the signature depends on the certificate: a self-signed one gives a signature that is intact but not trusted. There is no timestamp, since that would need a request to a timestamp authority.
 
+**`fill` does all three at once.** `--stamp FIELD=IMAGE` (repeatable, with `--stamp-fit`) stamps after the values are set. `--sign` signs last, and `--sign-field` picks the field. `fill` takes the same key and passphrase options as `sign`, so the order is always right:
+
+```bash
+pdfform fill form.pdf -d data.json --stamp Antragsteller_Unterschrift=signature.png \
+  --sign --sign-field Antragsteller_Unterschrift --p12 me.p12 -o signed.pdf
+```
+
+With `--flatten` the stamped image is baked into the page before signing. The signature then goes into a new invisible `Signature1`, because flattening removes the form.
+
 In Python:
 
 ```python
-from pdfform import stamp_signature, sign_pdf
+from pdfform import fill_form, stamp_signature, sign_pdf
 
 stamped = stamp_signature("form.pdf", "Antragsteller_Unterschrift", "signature.png")
 sign_pdf(stamped, "signed.pdf", pkcs12="me.p12", passphrase="...", field="Antragsteller_Unterschrift")
+
+# or fill and stamp in one pass, then sign
+filled = fill_form("form.pdf", data, stamp={"Antragsteller_Unterschrift": "signature.png"})
+sign_pdf(filled, "signed.pdf", pkcs12="me.p12", passphrase="...", field="Antragsteller_Unterschrift")
 ```
 
 ## Development

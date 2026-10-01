@@ -219,3 +219,79 @@ def test_cli_stamp_reports_a_wrong_field_without_a_traceback(form_path, tmp_path
     )
     assert result.exit_code == 2
     assert "only signature fields" in result.output
+
+
+def test_fill_form_stamps_in_the_same_pass(form_bytes):
+    from pdfform import fill_form
+
+    data = fill_form(form_bytes, {"Name": "Doe"}, stamp={"Sign": png(400, 100)})
+    assert drawn_box(data)[2] - drawn_box(data)[0] == pytest.approx(160)
+    assert str(field_dict(data, "Name")["/V"]) == "Doe"
+
+
+def test_fill_form_stamp_fit(form_bytes):
+    from pdfform import fill_form
+
+    data = fill_form(form_bytes, {"Name": "Doe"}, stamp={"Sign": png(10, 100)}, stamp_fit="stretch")
+    assert drawn_box(data) == pytest.approx((0, 0, 200, 40))
+
+
+def test_fill_form_stamp_then_flatten_draws_it_on_the_page(form_bytes):
+    from pdfform import fill_form
+
+    plain = fill_form(form_bytes, {"Name": "Doe"}, flatten=True)
+    stamped = fill_form(form_bytes, {"Name": "Doe"}, flatten=True, stamp={"Sign": png(400, 100)})
+
+    def content(data: bytes) -> bytes:
+        contents = read(data).pages[1].get_contents()
+        return contents.get_data() if contents is not None else b""
+
+    assert b" Do" in content(stamped)
+    assert b" Do" not in content(plain)
+    assert "/AcroForm" not in read(stamped).trailer["/Root"]
+
+
+def test_fill_form_stamp_errors_are_not_hidden(form_bytes):
+    from pdfform import fill_form
+
+    with pytest.raises(FieldValueError, match="only signature fields"):
+        fill_form(form_bytes, {"Name": "Doe"}, stamp={"Name": png(40, 10)})
+
+
+def test_cli_fill_stamps(form_path, tmp_path):
+    from click.testing import CliRunner
+
+    from pdfform.cli import main_cli
+
+    image = tmp_path / "sig.png"
+    image.write_bytes(png(400, 100))
+    out = tmp_path / "out.pdf"
+    result = CliRunner().invoke(
+        main_cli, ["fill", str(form_path), "--set", "Name=Doe", "--stamp", f"Sign={image}", "-o", str(out)]
+    )
+    assert result.exit_code == 0, result.output
+    assert drawn_box(out.read_bytes())
+
+
+def test_cli_fill_with_only_a_stamp(form_path, tmp_path):
+    from click.testing import CliRunner
+
+    from pdfform.cli import main_cli
+
+    image = tmp_path / "sig.png"
+    image.write_bytes(png(40, 10))
+    result = CliRunner().invoke(
+        main_cli, ["fill", str(form_path), "--stamp", f"Sign={image}", "-o", str(tmp_path / "o.pdf")]
+    )
+    assert result.exit_code == 0, result.output
+
+
+@pytest.mark.parametrize("spec", ["Sign", "=sig.png", "Sign=missing.png"])
+def test_cli_fill_rejects_a_bad_stamp(form_path, tmp_path, spec):
+    from click.testing import CliRunner
+
+    from pdfform.cli import main_cli
+
+    result = CliRunner().invoke(main_cli, ["fill", str(form_path), "--stamp", spec, "-o", str(tmp_path / "o.pdf")])
+    assert result.exit_code == 1
+    assert "--stamp" in result.output

@@ -208,6 +208,8 @@ def fill_form(
     need_appearances: bool = True,
     strict: bool = True,
     strip_xfa: bool | None = None,
+    stamp: dict[str, Any] | None = None,
+    stamp_fit: str = "contain",
 ) -> bytes:
     """Fill a PDF form and return the resulting document as bytes.
 
@@ -227,6 +229,11 @@ def fill_form(
         strip_xfa: Remove the XFA layer. The default removes it for static XFA
             forms, where leaving it in place lets Acrobat overwrite the values
             that were just written.
+        stamp: Signature images to draw, keyed by signature field name, each a
+            path or bytes as for :func:`~pdfform.stamp.stamp_signature`. Applied
+            after the values and before flattening, so a flattened document
+            carries the image on the page.
+        stamp_fit: ``contain`` or ``stretch``, for every stamp.
 
     Raises:
         DynamicXfaError: The form is dynamic XFA and cannot be filled this way.
@@ -302,6 +309,12 @@ def fill_form(
         except Exception as exc:  # pragma: no cover - depends on the source file
             logger.warning("Could not regenerate text appearances (%s); relying on /NeedAppearances", exc)
             need_appearances = True
+
+    if stamp:
+        from pdfform.stamp import apply_stamp
+
+        for field_name, image in stamp.items():
+            apply_stamp(writer, info, objects, field_name, image, fit=stamp_fit)  # type: ignore[arg-type]
 
     if flatten:
         flatten_widgets(writer)

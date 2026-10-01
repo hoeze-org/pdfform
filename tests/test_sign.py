@@ -286,3 +286,87 @@ def test_cli_sign_reports_a_wrong_passphrase_cleanly(cli, form_path, files, tmp_
 def test_the_passphrase_is_not_a_command_line_option(cli, form_path, files, tmp_path):
     result = cli("sign", form_path, "--p12", files["p12"], "--passphrase", PASSPHRASE, "-o", tmp_path / "o.pdf")
     assert result.exit_code == 2
+
+
+def test_cli_fill_stamps_and_signs_in_one_go(cli, form_path, files, identity, tmp_path):
+    pytest.importorskip("PIL")
+    from PIL import Image
+
+    image = tmp_path / "sig.png"
+    Image.new("RGB", (40, 10), (0, 0, 0)).save(image)
+    out = tmp_path / "out.pdf"
+    result = cli(
+        "fill", form_path, "--set", "Name=Doe", "--stamp", f"Sign={image}",
+        "--sign", "--p12", files["p12"], "--sign-field", "Sign", "--reason", "Approved", "-o", out,
+        env={"PDFFORM_PASSPHRASE": PASSPHRASE},
+    )  # fmt: skip
+    assert result.exit_code == 0, result.output
+    signed = out.read_bytes()
+    signatures, _ = check(signed, identity[1])
+    assert signatures[0].field_name == "Sign"
+    assert str(field_dict(signed, "Name")["/V"]) == "Doe"
+    assert field_dict(signed, "Sign")["/AP"]["/N"].get_data().startswith(b"q ")  # the stamp survived signing
+    assert str(field_dict(signed, "Sign")["/V"].get_object()["/Reason"]) == "Approved"
+
+
+def test_cli_fill_can_sign_without_stamping(cli, form_path, files, identity, tmp_path):
+    out = tmp_path / "out.pdf"
+    result = cli(
+        "fill",
+        form_path,
+        "--set",
+        "Name=Doe",
+        "--sign",
+        "--p12",
+        files["p12"],
+        "-o",
+        out,
+        env={"PDFFORM_PASSPHRASE": PASSPHRASE},
+    )
+    assert result.exit_code == 0, result.output
+    check(out.read_bytes(), identity[1])
+
+
+def test_cli_fill_with_flatten_signs_an_invisible_field(cli, form_path, files, identity, tmp_path):
+    out = tmp_path / "out.pdf"
+    result = cli(
+        "fill",
+        form_path,
+        "--set",
+        "Name=Doe",
+        "--flatten",
+        "--sign",
+        "--p12",
+        files["p12"],
+        "-o",
+        out,
+        env={"PDFFORM_PASSPHRASE": PASSPHRASE},
+    )
+    assert result.exit_code == 0, result.output
+    signatures, _ = check(out.read_bytes(), identity[1])
+    assert signatures[0].field_name == "Signature1"
+
+
+def test_cli_fill_signing_options_need_sign(cli, form_path, files, tmp_path):
+    result = cli("fill", form_path, "--set", "Name=Doe", "--p12", files["p12"], "-o", tmp_path / "o.pdf")
+    assert result.exit_code == 1
+    assert "--sign" in result.output
+    assert not (tmp_path / "o.pdf").exists()
+
+
+def test_cli_fill_does_not_write_an_unsigned_file_when_signing_fails(cli, form_path, files, tmp_path):
+    out = tmp_path / "o.pdf"
+    result = cli(
+        "fill",
+        form_path,
+        "--set",
+        "Name=Doe",
+        "--sign",
+        "--p12",
+        files["p12"],
+        "-o",
+        out,
+        env={"PDFFORM_PASSPHRASE": "wrong"},
+    )
+    assert result.exit_code == 2
+    assert not out.exists()
