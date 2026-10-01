@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,8 @@ from pdfform.extract import extract_form, get_acroform, open_pdf
 from pdfform.fill import fill_form, flatten_values, strip_xfa_layer
 from pdfform.model import OFF_STATE, FieldKind, FormInfo, PdfFormError, XfaKind
 from pdfform.schema import build_schema, current_values, validate_values
+from pdfform.sign import sign_pdf
+from pdfform.stamp import stamp_signature
 from pdfform.xfa import xfa_packets
 
 logger = logging.getLogger("pdfform")
@@ -73,6 +76,8 @@ def main_cli(verbose: int) -> None:
       pdfform schema form.pdf -o schema.json      # derive a JSON Schema
       pdfform values form.pdf -o data.json        # start from the current values
       pdfform fill form.pdf -d data.json -o out.pdf
+      pdfform stamp out.pdf --field Sign --image signature.png -o stamped.pdf
+      pdfform sign stamped.pdf --p12 me.p12 -o signed.pdf   # last, any later change breaks it
     """
     _configure_logging(verbose)
 
@@ -195,6 +200,69 @@ def values(pdf: Path, output: Path | None, include_empty: bool, include_read_onl
     _emit(payload, output, indent)
 
 
+def _signing_options(command: Any) -> Any:
+    """The credential and metadata options that `sign` and `fill --sign` share."""
+    options = [
+        click.option("--p12", type=PDF_ARG, help="PKCS#12 file (.p12, .pfx) with the key and certificate."),
+        click.option("--key", type=PDF_ARG, help="PEM private key. Needs --cert."),
+        click.option("--cert", type=PDF_ARG, help="PEM certificate of the signer."),
+        click.option("--chain", type=PDF_ARG, multiple=True, help="PEM certificate of an intermediate. Repeatable."),
+        click.option(
+            "--passphrase-file",
+            type=PDF_ARG,
+            help="File holding the passphrase of the key. The PDFFORM_PASSPHRASE environment variable works too.",
+        ),
+        click.option("--ask-passphrase", is_flag=True, help="Prompt for the passphrase of the key."),
+        click.option("--reason", help="Why the document is signed."),
+        click.option("--location", help="Where it was signed."),
+        click.option("--contact", help="How to reach the signer."),
+    ]
+    for option in reversed(options):
+        command = option(command)
+    return command
+
+
+def _signing_arguments(
+    p12: Path | None,
+    key: Path | None,
+    cert: Path | None,
+    chain: tuple[Path, ...],
+    passphrase_file: Path | None,
+    ask_passphrase: bool,
+    reason: str | None,
+    location: str | None,
+    contact: str | None,
+) -> dict[str, Any]:
+    passphrase: str | None = os.environ.get("PDFFORM_PASSPHRASE") or None
+    if passphrase_file is not None:
+        passphrase = passphrase_file.read_text(encoding="utf-8").rstrip("\r\n")
+    if ask_passphrase:
+        passphrase = click.prompt("Passphrase", hide_input=True, err=True)
+    return {
+        "pkcs12": p12,
+        "key": key,
+        "cert": cert,
+        "chain": chain,
+        "passphrase": passphrase,
+        "reason": reason,
+        "location": location,
+        "contact": contact,
+    }
+
+
+def _parse_stamps(stamps: tuple[str, ...]) -> dict[str, Path]:
+    parsed: dict[str, Path] = {}
+    for item in stamps:
+        name, separator, image = item.partition("=")
+        if not separator or not name:
+            raise click.ClickException(f"--stamp expects FIELD=IMAGE, got {item!r}")
+        path = Path(image)
+        if not path.is_file():
+            raise click.ClickException(f"--stamp: {image!r} is not a file")
+        parsed[name] = path
+    return parsed
+
+
 @main_cli.command()
 @click.argument("pdf", type=PDF_ARG)
 @click.option(
@@ -216,7 +284,7 @@ def values(pdf: Path, output: Path | None, include_empty: bool, include_read_onl
     "--need-appearances/--no-need-appearances",
     default=True,
     show_default=True,
-    help="Ask viewers to regenerate the field appearances.",
+    help="Ask viewers to regenerate the field appearances. Not set with --flatten or --sign.",
 )
 @click.option(
     "--strip-xfa/--keep-xfa",
@@ -225,6 +293,23 @@ def values(pdf: Path, output: Path | None, include_empty: bool, include_read_onl
     help="Drop the XFA layer. The default drops it only for static XFA forms.",
 )
 @click.option("--validate", "check", is_flag=True, help="Validate the values against the derived schema first.")
+@click.option(
+    "--stamp",
+    "stamps",
+    multiple=True,
+    metavar="FIELD=IMAGE",
+    help="Draw a signature image (PDF, PNG, JPEG or SVG) into a signature field. Repeatable.",
+)
+@click.option(
+    "--stamp-fit",
+    type=click.Choice(["contain", "stretch"]),
+    default="contain",
+    show_default=True,
+    help="How --stamp images fit their field.",
+)
+@click.option("--sign", "do_sign", is_flag=True, help="Sign the result with a certificate, as the very last step.")
+@click.option("--sign-field", metavar="NAME", help="The signature field --sign signs. Needed with several fields.")
+@_signing_options
 def fill(
     pdf: Path,
     data: Path | None,
@@ -235,6 +320,19 @@ def fill(
     need_appearances: bool,
     strip_xfa: bool | None,
     check: bool,
+    stamps: tuple[str, ...],
+    stamp_fit: str,
+    do_sign: bool,
+    sign_field: str | None,
+    p12: Path | None,
+    key: Path | None,
+    cert: Path | None,
+    chain: tuple[Path, ...],
+    passphrase_file: Path | None,
+    ask_passphrase: bool,
+    reason: str | None,
+    location: str | None,
+    contact: str | None,
 ) -> None:
     """Fill the form in PDF and write the result to --output.
 
@@ -243,6 +341,13 @@ def fill(
       pdfform fill form.pdf --set Name=Doe --set Agreed=true -o out.pdf
       pdfform fill form.pdf -d values.json -o out.pdf
       cat values.json | pdfform fill form.pdf -d - -o out.pdf
+
+    \b
+    Fill, stamp and sign in one go. The order is fixed: values, stamps, then the
+    signature, which has to be last because any later change breaks it. A signed
+    file must not change, so it does not ask viewers to regenerate appearances.
+      pdfform fill form.pdf -d values.json --stamp Unterschrift=sig.png \\
+          --sign --p12 me.p12 --sign-field Unterschrift -o out.pdf
     """
     payload: dict[str, Any] = _load_values(data) if data is not None else {}
     for assignment in assignments:
@@ -251,8 +356,22 @@ def fill(
             raise click.ClickException(f"--set expects NAME=VALUE, got {assignment!r}")
         payload[name] = _parse_scalar(value)
 
-    if not payload:
-        raise click.ClickException("No values given. Use --data and/or --set.")
+    stamp_images = _parse_stamps(stamps)
+    signing_options = (sign_field, p12, key, cert, passphrase_file, reason, location, contact)
+    if not do_sign and (chain or ask_passphrase or any(o is not None for o in signing_options)):
+        raise click.ClickException("Key, certificate and signature options only work together with --sign.")
+    if flatten and sign_field is not None:
+        raise click.ClickException(
+            "--flatten removes the form, so there is no field left for --sign-field. "
+            "The signature goes into a new invisible field."
+        )
+    if not (payload or stamp_images or do_sign):
+        raise click.ClickException("No values given. Use --data, --set, --stamp and/or --sign.")
+    signing = (
+        _signing_arguments(p12, key, cert, chain, passphrase_file, ask_passphrase, reason, location, contact)
+        if do_sign
+        else {}
+    )
 
     if check:
         problems = validate_values(build_schema(extract_form(pdf)), flatten_values(payload))
@@ -261,15 +380,19 @@ def fill(
                 click.echo(problem, err=True)
             raise click.ClickException(f"{len(problems)} value(s) do not match the schema; nothing was written.")
 
-    fill_form(
+    filled = fill_form(
         pdf,
         payload,
-        output,
+        None if do_sign else output,
         flatten=flatten,
-        need_appearances=need_appearances,
+        need_appearances=need_appearances and not do_sign,
         strict=strict,
         strip_xfa=strip_xfa,
+        stamp=stamp_images,  # type: ignore[arg-type]
+        stamp_fit=stamp_fit,
     )
+    if do_sign:
+        sign_pdf(filled, output, field=sign_field, **signing)
     click.echo(f"Wrote {output}", err=True)
 
 
@@ -341,6 +464,80 @@ def strip_xfa_command(pdf: Path, output: Path) -> None:
             err=True,
         )
     strip_xfa_layer(pdf, output)
+    click.echo(f"Wrote {output}", err=True)
+
+
+@main_cli.command()
+@click.argument("pdf", type=PDF_ARG)
+@click.option("--field", "field_name", required=True, metavar="NAME", help="The signature field to draw into.")
+@click.option(
+    "--image",
+    required=True,
+    type=PDF_ARG,
+    help="The signature as PDF, PNG, JPEG or SVG. Only the first page of a PDF is used.",
+)
+@click.option("-o", "--output", type=OUT_OPT, required=True, help="Where to write the stamped PDF.")
+@click.option(
+    "--fit",
+    type=click.Choice(["contain", "stretch"]),
+    default="contain",
+    show_default=True,
+    help="contain keeps the aspect ratio and centres the image, stretch fills the field.",
+)
+def stamp(pdf: Path, field_name: str, image: Path, output: Path, fit: str) -> None:
+    """Draw a signature image into a signature field of PDF.
+
+    This only makes the field look signed. It is not a cryptographic signature,
+    see `pdfform sign` for that. The image becomes the field's appearance, so
+    `fill --flatten` bakes it into the page and `sign` keeps it visible.
+    PNG, JPEG and SVG need `pip install 'pdfform[stamp]'`.
+
+    A signed document is refused, because stamping would break the signature.
+    Stamp every field before the first signature.
+
+    \b
+      pdfform stamp form.pdf --field Antragsteller_Unterschrift --image sig.png -o out.pdf
+    """
+    stamp_signature(pdf, field_name, image, output, fit=fit)  # type: ignore[arg-type]
+    click.echo(f"Wrote {output}", err=True)
+
+
+@main_cli.command()
+@click.argument("pdf", type=PDF_ARG)
+@click.option("--field", "field_name", metavar="NAME", help="The signature field to sign. See below for the default.")
+@click.option("-o", "--output", type=OUT_OPT, required=True, help="Where to write the signed PDF.")
+@_signing_options
+def sign(
+    pdf: Path,
+    p12: Path | None,
+    key: Path | None,
+    cert: Path | None,
+    chain: tuple[Path, ...],
+    passphrase_file: Path | None,
+    ask_passphrase: bool,
+    reason: str | None,
+    location: str | None,
+    contact: str | None,
+    field_name: str | None,
+    output: Path,
+) -> None:
+    """Sign PDF with a certificate, as an incremental update.
+
+    A form with one unsigned signature field signs that field. A document
+    without one gets a new invisible `Signature1`, or `Signature2` if that is
+    taken. With several, pick one with --field. A signature image placed with
+    `pdfform stamp` stays visible.
+
+    Sign last. Any change afterwards, `fill` included, breaks the signature.
+    Needs `pip install 'pdfform[sign]'`. The passphrase is never a command line
+    argument, so it does not end up in the shell history.
+
+    \b
+      pdfform sign form.pdf --p12 me.p12 --field Antragsteller_Unterschrift -o signed.pdf
+      pdfform sign form.pdf --key key.pem --cert cert.pem --ask-passphrase -o signed.pdf
+    """
+    signing = _signing_arguments(p12, key, cert, chain, passphrase_file, ask_passphrase, reason, location, contact)
+    sign_pdf(pdf, output, field=field_name, **signing)
     click.echo(f"Wrote {output}", err=True)
 
 
