@@ -65,7 +65,7 @@ jobs:
           git push
 
   publish:
-    name: Publish to PyPI
+    name: Start publish.yml
     needs: release-please
     # Opt-in: set the repository variable PYPI_PUBLISH to "true" once trusted
     # publishing is configured on PyPI. Without it a release just cuts a tag.
