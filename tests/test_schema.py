@@ -27,6 +27,7 @@ def test_only_fillable_fields_are_described(schema):
         "Name",
         "Consent",
         "Colour",
+        "Direction",
         "Country",
         "Langs",
         "Address.Street",

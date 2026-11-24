@@ -10,10 +10,10 @@ from formbuilder import build_form
 from pypdf import PdfWriter
 
 
-@pytest.fixture(scope="session")
-def form_bytes() -> bytes:
-    """A plain AcroForm covering every field kind."""
-    return build_form()
+@pytest.fixture(scope="session", params=[False, True], ids=["plain", "objstm"])
+def form_bytes(request: pytest.FixtureRequest) -> bytes:
+    """A plain AcroForm covering every field kind, once as plain objects and once in an object stream."""
+    return build_form(objstm=request.param)
 
 
 @pytest.fixture

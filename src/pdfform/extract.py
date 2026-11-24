@@ -16,9 +16,11 @@ awkward parts of the AcroForm data model:
 
 from __future__ import annotations
 
+import functools
+import inspect
 import io
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any, cast
 
 from pypdf import PdfReader, PdfWriter
@@ -33,16 +35,19 @@ from pdfform.model import (
     FormInfo,
     Widget,
 )
+from pdfform.names import decoding_names
 from pdfform.xfa import detect_xfa
 
 logger = logging.getLogger(__name__)
 
-#: Entries a child field inherits from its ancestors when it does not set them.
 INHERITABLE = ("/FT", "/Ff", "/V", "/DV", "/Opt", "/MaxLen", "/DA", "/Q")
+"""Entries a child field inherits from its ancestors when it does not set them."""
 
-#: ``/F`` annotation flag bits we care about (PDF 32000-1 table 165).
 ANNOT_HIDDEN = 1 << 1
+"""``/F`` annotation flag: do not show or print the annotation (PDF 32000-1 table 165)."""
+
 ANNOT_NOVIEW = 1 << 5
+"""``/F`` annotation flag: do not show the annotation on screen. It may still print (PDF 32000-1 table 165)."""
 
 PdfSource = "str | Path | bytes | PdfReader | PdfWriter"
 
@@ -52,9 +57,12 @@ def open_pdf(source: Any) -> PdfReader | PdfWriter:
     if isinstance(source, (PdfReader, PdfWriter)):
         return source
     if isinstance(source, (bytes, bytearray)):
-        reader = PdfReader(io.BytesIO(bytes(source)))
-    else:
-        reader = PdfReader(str(source))
+        return _read(io.BytesIO(bytes(source)))
+    return _read(str(source))
+
+
+def _read(stream: Any) -> PdfReader:
+    reader = PdfReader(stream)
     if reader.is_encrypted:
         # Many public forms are "encrypted" only to set permission bits and open
         # fine with an empty user password.
@@ -93,6 +101,47 @@ def get_acroform(doc: PdfReader | PdfWriter) -> DictionaryObject | None:
 
 
 _acroform = get_acroform
+
+
+def _peek_lang(source: Any) -> str | None:
+    """Return the ``/Lang`` of *source*, read through a reader of its own.
+
+    pypdf parses a whole object stream when it needs one object from it. Read
+    through the reader that the call uses, the catalog would bring along every
+    name stored next to it, decoded before the charsets are set.
+    """
+    try:
+        if isinstance(source, PdfWriter):
+            doc: PdfReader | PdfWriter = source  # a writer holds decoded objects only
+        else:
+            doc = _read(source.stream) if isinstance(source, PdfReader) else open_pdf(source)
+        lang = doc.root_object.get("/Lang")
+    except Exception as exc:  # only a hint: opening the document for real reports a broken file
+        logger.debug("Could not read /Lang: %s", exc)
+        return None
+    return str(lang) if lang is not None else None
+
+
+def decodes_names[**P, R](func: Callable[P, R]) -> Callable[P, R]:
+    """Run *func* with the name charsets for its ``source`` document.
+
+    Those are the charsets of an active :func:`~pdfform.names.name_charsets`,
+    or else the ones for the document's ``/Lang``. The wrapper opens ``source``
+    inside that scope and passes the open document on, so *func* reads it under
+    those charsets. A reader that the caller opened keeps the decoding of the
+    objects it has read already.
+    """
+    signature = inspect.signature(func)
+
+    @functools.wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        bound = signature.bind(*args, **kwargs)
+        source = bound.arguments["source"]
+        with decoding_names(lambda: _peek_lang(source)):
+            bound.arguments["source"] = open_pdf(source)
+            return cast(Any, func)(*bound.args, **bound.kwargs)
+
+    return wrapper
 
 
 def _name(value: Any) -> str | None:
@@ -375,6 +424,7 @@ def extract_form(source: Any, *, infer_labels: bool = False) -> FormInfo:
     return extract_form_and_objects(source, infer_labels=infer_labels)[0]
 
 
+@decodes_names
 def extract_form_and_objects(
     source: Any, *, infer_labels: bool = False
 ) -> tuple[FormInfo, dict[str, tuple[DictionaryObject, list[DictionaryObject]]]]:
@@ -384,6 +434,9 @@ def extract_form_and_objects(
     and the list of its widget annotations. Writers need it because a value goes
     on the field (``/V``) while the appearance state goes on every widget
     (``/AS``).
+
+    pypdf reads objects lazily. An object that is first read after this call
+    returns gets pypdf's own name charsets, not the ones for this document.
     """
     doc = open_pdf(source)
     acro = _acroform(doc)

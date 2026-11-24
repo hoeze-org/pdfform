@@ -38,8 +38,8 @@ from pdfform.model import (
 
 SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
 
-#: Keyword used for the PDF-specific annotations attached to each property.
 PDF_KEYWORD = "x-pdf"
+"""Keyword used for the PDF-specific annotations attached to each property."""
 
 
 def field_schema(field: FormField) -> dict[str, Any]:

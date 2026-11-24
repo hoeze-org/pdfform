@@ -16,6 +16,7 @@ def test_finds_every_field(info):
         "Name",
         "Consent",
         "Colour",
+        "Direction",
         "Country",
         "Langs",
         "Address.Street",

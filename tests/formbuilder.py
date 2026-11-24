@@ -4,12 +4,16 @@ Building the forms by hand rather than with a generator library is deliberate:
 the interesting cases are exactly the ones a friendly generator smooths over -
 a check box whose on-state is ``/Ja``, a radio group whose kids each have a
 different on-state, a text field whose ``/AP /N`` is a stream and not a state
-dictionary, and hierarchical field names.
+dictionary, hierarchical field names, a radio state stored as Latin-1 bytes
+rather than UTF-8, and, on request, an object stream that holds the catalog and
+the fields.
 """
 
 from __future__ import annotations
 
 import io
+import re
+import struct
 from typing import Any
 
 from pypdf import PdfReader, PdfWriter
@@ -76,13 +80,30 @@ def _stream_ap(writer: PdfWriter) -> DictionaryObject:
     return appearance_dict
 
 
-def build_form(*, xfa: str | None = None, xfa_fields: bool = True) -> bytes:
+LATIN1_STATE = b"/R#FCckfahrt"
+"""The on-state ``Rückfahrt`` as Latin-1 bytes.
+
+pypdf writes every name as UTF-8, so :func:`build_form` writes
+:data:`_LATIN1_PLACEHOLDER` and swaps in these bytes afterwards.
+"""
+
+_LATIN1_PLACEHOLDER = "R@FCckfahrt"
+"""An ASCII stand-in for :data:`LATIN1_STATE` of the same length, which keeps the cross-reference offsets valid."""
+
+
+def build_form(
+    *, xfa: str | None = None, xfa_fields: bool = True, lang: str | None = None, objstm: bool = False
+) -> bytes:
     """Build the reference form used by most tests.
 
     Args:
         xfa: ``None`` for a plain AcroForm, ``"hybrid"`` or ``"dynamic"`` to add
             an XFA packet. A dynamic form also gets an empty ``/Fields`` array.
         xfa_fields: Kept for readability at the call site; ignored.
+        lang: The ``/Lang`` entry of the catalog. ``None`` leaves it out.
+        objstm: Pack every object except the streams into one object stream,
+            as many PDF 1.5 writers do. A reader then parses the catalog, the
+            fields and the widgets together.
     """
     writer = PdfWriter()
     writer.add_blank_page(width=595, height=842)
@@ -134,6 +155,26 @@ def build_form(*, xfa: str | None = None, xfa_fields: bool = True) -> bytes:
         annots1.append(kid_ref)
     colour[NameObject("/Kids")] = kids
     fields.append(colour_ref)
+
+    # A radio group whose second on-state is "Rückfahrt" in Latin-1. pypdf's own
+    # charsets would decode it as GBK, "R點kfahrt".
+    direction = DictionaryObject()
+    direction[NameObject("/FT")] = NameObject("/Btn")
+    direction[NameObject("/T")] = TextStringObject("Direction")
+    direction[NameObject("/Ff")] = NumberObject(1 << 15)
+    direction[NameObject("/V")] = NameObject("/Off")
+    direction_ref = writer._add_object(direction)
+    kids = ArrayObject()
+    for state, x in (("Hinfahrt", 150), (_LATIN1_PLACEHOLDER, 200)):
+        kid = _widget(writer, (x, 620, x + 12, 632))
+        kid[NameObject("/AP")] = _states(writer, state, "Off")
+        kid[NameObject("/AS")] = NameObject("/Off")
+        kid[NameObject("/Parent")] = direction_ref
+        kid_ref = writer._add_object(kid)
+        kids.append(kid_ref)
+        annots1.append(kid_ref)
+    direction[NameObject("/Kids")] = kids
+    fields.append(direction_ref)
 
     # A dropdown whose options carry separate export values and display labels.
     country = _widget(writer, (50, 580, 250, 600))
@@ -232,10 +273,67 @@ def build_form(*, xfa: str | None = None, xfa_fields: bool = True) -> bytes:
             ]
         )
     writer.root_object[NameObject("/AcroForm")] = writer._add_object(acro)
+    if lang is not None:
+        writer.root_object[NameObject("/Lang")] = TextStringObject(lang)
 
     buffer = io.BytesIO()
     writer.write(buffer)
-    return buffer.getvalue()
+    placeholder = f"/{_LATIN1_PLACEHOLDER}".encode()
+    data = buffer.getvalue()
+    assert data.count(placeholder) == 1, "the placeholder must be written exactly once, unescaped"
+    data = data.replace(placeholder, LATIN1_STATE)
+    return _pack_object_stream(data) if objstm else data
+
+
+def _pack_object_stream(data: bytes) -> bytes:
+    """Move every object of a pypdf-written PDF except the streams into one object stream.
+
+    pypdf never writes object streams. This works on the raw bytes, so every
+    name keeps the bytes it was written with, and it adds a cross-reference
+    stream, which object streams need.
+    """
+    objects = {int(n): body for n, body in re.findall(rb"(?ms)^(\d+) 0 obj\n(.*?)\nendobj\n", data)}
+    trailer = data[data.rindex(b"trailer") :]
+    refs = b"".join(m.group(0) + b" " for m in re.finditer(rb"/(?:Root|Info) \d+ 0 R", trailer))
+    packed = [n for n, body in objects.items() if b"\nstream\n" not in body]
+    stm = max(objects) + 1
+    xref = stm + 1
+    entries: dict[int, tuple[int, int, int]] = {0: (0, 0, 65535)}
+
+    out = bytearray(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
+    for n, body in objects.items():
+        if n not in packed:
+            entries[n] = (1, len(out), 0)
+            out += b"%d 0 obj\n%s\nendobj\n" % (n, body)
+
+    offsets = bodies = b""
+    for index, n in enumerate(packed):
+        offsets += b"%d %d " % (n, len(bodies))
+        bodies += objects[n] + b"\n"
+        entries[n] = (2, stm, index)
+    content = offsets + bodies
+    entries[stm] = (1, len(out), 0)
+    out += b"%d 0 obj\n<< /Type /ObjStm /N %d /First %d /Length %d >>\nstream\n" % (
+        stm,
+        len(packed),
+        len(offsets),
+        len(content),
+    )
+    out += content + b"\nendstream\nendobj\n"
+
+    entries[xref] = (1, len(out), 0)
+    rows = b"".join(
+        bytes([kind]) + struct.pack(">IH", first, second)
+        for kind, first, second in (entries.get(n, (0, 0, 0)) for n in range(xref + 1))
+    )
+    out += b"%d 0 obj\n<< /Type /XRef /Size %d /W [1 4 2] %s/Length %d >>\nstream\n" % (
+        xref,
+        xref + 1,
+        refs,
+        len(rows),
+    )
+    out += rows + b"\nendstream\nendobj\nstartxref\n%d\n%%%%EOF\n" % entries[xref][1]
+    return bytes(out)
 
 
 def read(data: bytes) -> PdfReader:

@@ -11,7 +11,7 @@ The command line equivalent is ``pdfform schema`` and ``pdfform fill``.
 from __future__ import annotations
 
 from pdfform.extract import extract_form, extract_form_and_objects, get_acroform, open_pdf
-from pdfform.fill import fill_form, flatten_values, strip_xfa_layer
+from pdfform.fill import fill_form, flatten_values, normalize_names, strip_xfa_layer
 from pdfform.flatten import flatten_widgets
 from pdfform.model import (
     DynamicXfaError,
@@ -28,6 +28,7 @@ from pdfform.model import (
     Widget,
     XfaKind,
 )
+from pdfform.names import name_charsets
 from pdfform.schema import build_schema, current_values, field_schema, validate_values
 from pdfform.sign import sign_pdf
 from pdfform.stamp import stamp_signature
@@ -64,6 +65,8 @@ __all__ = [
     "flatten_values",
     "flatten_widgets",
     "get_acroform",
+    "name_charsets",
+    "normalize_names",
     "open_pdf",
     "sign_pdf",
     "stamp_signature",
