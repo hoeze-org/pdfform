@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/hoeze-org/pdfform/compare/v0.3.0...v0.4.0) (2026-11-24)
+
+
+### Features
+
+* add --name-charsets and name_charsets() to override the charset ([f6ae902](https://github.com/hoeze-org/pdfform/commit/f6ae902332f6f826ea0ae3e2f2011d959ca7b044))
+* add the normalize command and normalize_names() ([f6ae902](https://github.com/hoeze-org/pdfform/commit/f6ae902332f6f826ea0ae3e2f2011d959ca7b044))
+
+
+### Bug Fixes
+
+* decode non-UTF-8 button states by the document's /Lang ([#18](https://github.com/hoeze-org/pdfform/issues/18)) ([f6ae902](https://github.com/hoeze-org/pdfform/commit/f6ae902332f6f826ea0ae3e2f2011d959ca7b044))
+
 ## [0.3.0](https://github.com/hoeze-org/pdfform/compare/v0.2.0...v0.3.0) (2026-10-01)
 
 
