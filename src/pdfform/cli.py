@@ -12,8 +12,9 @@ from typing import Any
 import click
 
 from pdfform.extract import extract_form, get_acroform, open_pdf
-from pdfform.fill import fill_form, flatten_values, strip_xfa_layer
+from pdfform.fill import fill_form, flatten_values, normalize_names, strip_xfa_layer
 from pdfform.model import OFF_STATE, FieldKind, FormInfo, PdfFormError, XfaKind
+from pdfform.names import name_charsets
 from pdfform.schema import build_schema, current_values, validate_values
 from pdfform.sign import sign_pdf
 from pdfform.stamp import stamp_signature
@@ -67,7 +68,18 @@ class _Group(click.Group):
 @click.group(cls=_Group, context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(package_name="pdfform")
 @click.option("-v", "--verbose", count=True, help="Increase log verbosity. Repeatable.")
-def main_cli(verbose: int) -> None:
+@click.option(
+    "--name-charsets",
+    "charsets",
+    metavar="CODECS",
+    help=(
+        "Decode button states and other PDF names that are not UTF-8 with these Python codecs, "
+        "comma-separated and tried in order, e.g. utf-8,cp1250. "
+        "Default: utf-8, then the code page for the document's /Lang, then latin1."
+    ),
+)
+@click.pass_context
+def main_cli(ctx: click.Context, verbose: int, charsets: str | None) -> None:
     """Inspect, describe and fill PDF forms.
 
     \b
@@ -80,6 +92,11 @@ def main_cli(verbose: int) -> None:
       pdfform sign stamped.pdf --p12 me.p12 -o signed.pdf   # last, any later change breaks it
     """
     _configure_logging(verbose)
+    if charsets is not None:
+        try:
+            ctx.with_resource(name_charsets(*(c.strip() for c in charsets.split(",") if c.strip())))
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint="--name-charsets") from exc
 
 
 @main_cli.command()
@@ -464,6 +481,19 @@ def strip_xfa_command(pdf: Path, output: Path) -> None:
             err=True,
         )
     strip_xfa_layer(pdf, output)
+    click.echo(f"Wrote {output}", err=True)
+
+
+@main_cli.command("normalize")
+@click.argument("pdf", type=PDF_ARG)
+@click.option("-o", "--output", type=OUT_OPT, required=True, help="Where to write the result.")
+def normalize_command(pdf: Path, output: Path) -> None:
+    """Rewrite PDF with every name in UTF-8, for example before merging PDFs.
+
+    Names that are not UTF-8 are decoded with the code page for the document's
+    /Lang, or with --name-charsets. Nothing else changes.
+    """
+    normalize_names(pdf, output)
     click.echo(f"Wrote {output}", err=True)
 
 

@@ -16,9 +16,11 @@ awkward parts of the AcroForm data model:
 
 from __future__ import annotations
 
+import functools
+import inspect
 import io
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any, cast
 
 from pypdf import PdfReader, PdfWriter
@@ -33,6 +35,7 @@ from pdfform.model import (
     FormInfo,
     Widget,
 )
+from pdfform.names import decoding_names
 from pdfform.xfa import detect_xfa
 
 logger = logging.getLogger(__name__)
@@ -93,6 +96,26 @@ def get_acroform(doc: PdfReader | PdfWriter) -> DictionaryObject | None:
 
 
 _acroform = get_acroform
+
+
+def decodes_names[**P, R](func: Callable[P, R]) -> Callable[P, R]:
+    """Run *func* with the name charsets for its ``source`` document.
+
+    Those are the charsets of an active :func:`~pdfform.names.name_charsets`,
+    or else the ones for the document's ``/Lang``. The wrapper opens ``source``
+    and passes the open document on, so *func* reads it under those charsets.
+    """
+    signature = inspect.signature(func)
+
+    @functools.wraps(func)
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+        bound = signature.bind(*args, **kwargs)
+        doc = bound.arguments["source"] = open_pdf(bound.arguments["source"])
+        lang = _catalog(doc).get("/Lang")
+        with decoding_names(str(lang) if lang is not None else None):
+            return cast(Any, func)(*bound.args, **bound.kwargs)
+
+    return wrapper
 
 
 def _name(value: Any) -> str | None:
@@ -375,6 +398,7 @@ def extract_form(source: Any, *, infer_labels: bool = False) -> FormInfo:
     return extract_form_and_objects(source, infer_labels=infer_labels)[0]
 
 
+@decodes_names
 def extract_form_and_objects(
     source: Any, *, infer_labels: bool = False
 ) -> tuple[FormInfo, dict[str, tuple[DictionaryObject, list[DictionaryObject]]]]:
@@ -384,6 +408,9 @@ def extract_form_and_objects(
     and the list of its widget annotations. Writers need it because a value goes
     on the field (``/V``) while the appearance state goes on every widget
     (``/AS``).
+
+    pypdf reads objects lazily. An object that is first read after this call
+    returns gets pypdf's own name charsets, not the ones for this document.
     """
     doc = open_pdf(source)
     acro = _acroform(doc)

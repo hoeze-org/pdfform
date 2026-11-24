@@ -33,7 +33,7 @@ from pypdf.generic import (
     StreamObject,
 )
 
-from pdfform.extract import extract_form_and_objects, open_reader
+from pdfform.extract import decodes_names, extract_form_and_objects, open_reader
 from pdfform.fill import _match_field, _signed_fields, _write_out
 from pdfform.flatten import IDENTITY, _floats, _format_matrix, placement_matrix
 from pdfform.model import (
@@ -263,6 +263,7 @@ def _widget_rotation(writer: PdfWriter, widget: DictionaryObject) -> int:
     return _page_rotation(writer, widget)
 
 
+@decodes_names
 def stamp_signature(
     source: Any,
     field: str,

@@ -4,7 +4,8 @@ Building the forms by hand rather than with a generator library is deliberate:
 the interesting cases are exactly the ones a friendly generator smooths over -
 a check box whose on-state is ``/Ja``, a radio group whose kids each have a
 different on-state, a text field whose ``/AP /N`` is a stream and not a state
-dictionary, and hierarchical field names.
+dictionary, hierarchical field names, and a radio state stored as Latin-1
+bytes rather than UTF-8.
 """
 
 from __future__ import annotations
@@ -76,13 +77,22 @@ def _stream_ap(writer: PdfWriter) -> DictionaryObject:
     return appearance_dict
 
 
-def build_form(*, xfa: str | None = None, xfa_fields: bool = True) -> bytes:
+#: The on-state ``Rückfahrt`` as Latin-1 bytes, and an ASCII placeholder of the
+#: same length. pypdf writes every name as UTF-8, so :func:`build_form` writes
+#: the placeholder and swaps in the Latin-1 bytes afterwards. The equal length
+#: keeps the cross-reference offsets valid.
+LATIN1_STATE = b"/R#FCckfahrt"
+_LATIN1_PLACEHOLDER = "R@FCckfahrt"
+
+
+def build_form(*, xfa: str | None = None, xfa_fields: bool = True, lang: str | None = None) -> bytes:
     """Build the reference form used by most tests.
 
     Args:
         xfa: ``None`` for a plain AcroForm, ``"hybrid"`` or ``"dynamic"`` to add
             an XFA packet. A dynamic form also gets an empty ``/Fields`` array.
         xfa_fields: Kept for readability at the call site; ignored.
+        lang: The ``/Lang`` entry of the catalog. ``None`` leaves it out.
     """
     writer = PdfWriter()
     writer.add_blank_page(width=595, height=842)
@@ -134,6 +144,26 @@ def build_form(*, xfa: str | None = None, xfa_fields: bool = True) -> bytes:
         annots1.append(kid_ref)
     colour[NameObject("/Kids")] = kids
     fields.append(colour_ref)
+
+    # A radio group whose second on-state is "Rückfahrt" in Latin-1. pypdf's own
+    # charsets would decode it as GBK, "R點kfahrt".
+    direction = DictionaryObject()
+    direction[NameObject("/FT")] = NameObject("/Btn")
+    direction[NameObject("/T")] = TextStringObject("Direction")
+    direction[NameObject("/Ff")] = NumberObject(1 << 15)
+    direction[NameObject("/V")] = NameObject("/Off")
+    direction_ref = writer._add_object(direction)
+    kids = ArrayObject()
+    for state, x in (("Hinfahrt", 150), (_LATIN1_PLACEHOLDER, 200)):
+        kid = _widget(writer, (x, 620, x + 12, 632))
+        kid[NameObject("/AP")] = _states(writer, state, "Off")
+        kid[NameObject("/AS")] = NameObject("/Off")
+        kid[NameObject("/Parent")] = direction_ref
+        kid_ref = writer._add_object(kid)
+        kids.append(kid_ref)
+        annots1.append(kid_ref)
+    direction[NameObject("/Kids")] = kids
+    fields.append(direction_ref)
 
     # A dropdown whose options carry separate export values and display labels.
     country = _widget(writer, (50, 580, 250, 600))
@@ -232,10 +262,15 @@ def build_form(*, xfa: str | None = None, xfa_fields: bool = True) -> bytes:
             ]
         )
     writer.root_object[NameObject("/AcroForm")] = writer._add_object(acro)
+    if lang is not None:
+        writer.root_object[NameObject("/Lang")] = TextStringObject(lang)
 
     buffer = io.BytesIO()
     writer.write(buffer)
-    return buffer.getvalue()
+    placeholder = f"/{_LATIN1_PLACEHOLDER}".encode()
+    data = buffer.getvalue()
+    assert data.count(placeholder) == 1, "the placeholder must be written exactly once, unescaped"
+    return data.replace(placeholder, LATIN1_STATE)
 
 
 def read(data: bytes) -> PdfReader:

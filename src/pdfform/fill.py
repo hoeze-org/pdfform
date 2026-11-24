@@ -29,7 +29,7 @@ from pypdf.generic import (
     TextStringObject,
 )
 
-from pdfform.extract import extract_form_and_objects, open_reader
+from pdfform.extract import decodes_names, extract_form_and_objects, open_reader
 from pdfform.flatten import flatten_widgets
 from pdfform.model import (
     OFF_STATE,
@@ -204,6 +204,7 @@ def _set_value(field_obj: DictionaryObject, value: str | list[str] | None) -> No
     field_obj.pop(NameObject("/I"), None)
 
 
+@decodes_names
 def fill_form(
     source: Any,
     values: dict[str, Any],
@@ -351,6 +352,7 @@ def _write_out(writer: PdfWriter, output: Any) -> bytes:
     return data
 
 
+@decodes_names
 def strip_xfa_layer(source: Any, output: Any = None) -> bytes:
     """Drop the XFA layer of a document, leaving the AcroForm intact.
 
@@ -359,4 +361,20 @@ def strip_xfa_layer(source: Any, output: Any = None) -> bytes:
     writer = PdfWriter(clone_from=open_reader(source))
     if not _strip_xfa(writer.root_object):
         logger.info("No XFA layer present")
+    return _write_out(writer, output)
+
+
+@decodes_names
+def normalize_names(source: Any, output: Any = None) -> bytes:
+    """Rewrite a document with every name in UTF-8, and return it as bytes.
+
+    Names that are not UTF-8 are decoded as for every other call, see
+    :mod:`pdfform.names`. Run this on each file before merging files whose
+    names use different encodings. The content stays the same, but the file
+    is written anew, which breaks any signature in it.
+    """
+    writer = PdfWriter(clone_from=open_reader(source))
+    signed = _signed_fields(extract_form_and_objects(writer)[0])
+    if signed:
+        logger.warning("The document is signed (%s). Rewriting it breaks the signature", ", ".join(signed))
     return _write_out(writer, output)

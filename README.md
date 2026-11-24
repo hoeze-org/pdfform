@@ -69,7 +69,7 @@ pdfform validate form.pdf -d data.json
 pdfform fill form.pdf -d data.json -o filled.pdf --validate   # refuses to write on a mismatch
 ```
 
-Other commands: `pdfform stamp` and `pdfform sign`, described below, `pdfform strip-xfa` removes an XFA layer, `pdfform xfa` lists or dumps the XFA packets. `pdfform --help` covers the rest.
+Other commands: `pdfform stamp` and `pdfform sign`, described below, `pdfform strip-xfa` removes an XFA layer, `pdfform normalize` rewrites every name as UTF-8, `pdfform xfa` lists or dumps the XFA packets. `pdfform --help` covers the rest.
 
 ## Library
 
@@ -130,6 +130,8 @@ These are the reasons this tool exists rather than a forty-line script.
 **`/V` alone is not enough.** `/V` is the logical value; `/AS` selects which appearance stream gets drawn. Set only `/V` and the file is correct while the box looks empty in every viewer. For a radio group the rule applies per widget: `/V` goes on the group, every kid gets `/AS`, and only the kid whose own on-state matches is switched on.
 
 **A button value is a name, not a string.** Written as a text string it is silently ignored.
+
+**A button state has no encoding.** An on-state is a PDF name, and a name is a byte sequence. The spec only recommends UTF-8, and some forms store "Rückfahrt" as Latin-1, `/R#fcckfahrt`. pypdf tries GBK before Latin-1 and reads that as `R點kfahrt`. `pdfform` tries UTF-8, then the Windows code page for the document's `/Lang`, then Latin-1. A document without `/Lang` gets cp1252. If the states still look garbled, name the codecs yourself: `pdfform --name-charsets utf-8,cp1250 fill ...`, or `with pdfform.name_charsets("utf-8", "cp1250"):` in Python. Every command but `sign` rewrites the whole file and stores its names as UTF-8, so other tools read them correctly too. `sign` appends to the file and keeps the original bytes. `pdfform normalize in.pdf -o out.pdf` does only that conversion. Run it on each file before merging files whose names use different encodings, because one merged file has only one `/Lang`.
 
 **Appearance streams.** Without regenerating appearances, Acrobat may show a value that Preview, Chrome's viewer or a printer does not. `pdfform` both generates appearance streams for text and choice fields and sets `/NeedAppearances`, since neither is reliable alone.
 
