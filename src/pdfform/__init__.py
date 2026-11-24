@@ -39,7 +39,7 @@ try:  # pragma: no cover - only missing when running from a source tree
 
     __version__ = version("pdfform")
 except Exception:  # pragma: no cover
-    __version__ = "0.4.0"
+    __version__ = "0.5.0"
 
 __all__ = [
     "DynamicXfaError",
