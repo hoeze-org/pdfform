@@ -113,6 +113,57 @@ def test_set_overrides_the_file(run, form_path, tmp_path):
     assert json.loads(run("values", out).stdout)["Name"] == "From flag"
 
 
+def test_later_data_files_override_earlier_ones(run, form_path, tmp_path):
+    defaults = tmp_path / "defaults.json"
+    defaults.write_text(json.dumps({"Name": "Erika", "Colour": "Red"}))
+    trip = tmp_path / "trip.json"
+    trip.write_text(json.dumps({"Colour": "Blue"}))
+    out = tmp_path / "filled.pdf"
+    assert run("fill", form_path, "-d", defaults, "-d", trip, "-o", out).exit_code == 0
+    values = json.loads(run("values", out).stdout)
+    assert values["Name"] == "Erika"
+    assert values["Colour"] == "Blue"
+
+
+def test_data_files_merge_nested_objects_field_by_field(run, form_path, tmp_path):
+    street = tmp_path / "street.json"
+    street.write_text(json.dumps({"Address": {"Street": "Hauptstr. 1"}}))
+    out = tmp_path / "filled.pdf"
+    city = json.dumps({"Address": {"City": "Berlin"}})
+    result = run("fill", form_path, "-d", street, "-d", "-", "-o", out, input=city)
+    assert result.exit_code == 0
+    values = json.loads(run("values", out).stdout)
+    assert values["Address.Street"] == "Hauptstr. 1"
+    assert values["Address.City"] == "Berlin"
+
+
+def test_the_last_file_wins_over_a_partial_name(run, form_path, tmp_path):
+    """City and Address.City name the same field."""
+    paths = []
+    for i, values in enumerate(({"Address.City": "A"}, {"City": "B"}, {"Address.City": "C"})):
+        paths += ["-d", tmp_path / f"{i}.json"]
+        paths[-1].write_text(json.dumps(values))
+    out = tmp_path / "filled.pdf"
+    assert run("fill", form_path, *paths, "-o", out).exit_code == 0
+    assert json.loads(run("values", out).stdout)["Address.City"] == "C"
+
+
+def test_set_overrides_a_partial_name_from_the_files(run, form_path, tmp_path):
+    full = tmp_path / "full.json"
+    full.write_text(json.dumps({"Address.City": "A"}))
+    partial = tmp_path / "partial.json"
+    partial.write_text(json.dumps({"City": "B"}))
+    out = tmp_path / "filled.pdf"
+    assert run("fill", form_path, "-d", full, "-d", partial, "--set", "Address.City=X", "-o", out).exit_code == 0
+    assert json.loads(run("values", out).stdout)["Address.City"] == "X"
+
+
+def test_stdin_can_be_given_only_once(run, form_path, tmp_path):
+    result = run("fill", form_path, "-d", "-", "-d", "-", "-o", tmp_path / "out.pdf", input="{}")
+    assert result.exit_code != 0
+    assert "stdin only once" in result.output
+
+
 def test_fill_needs_some_values(run, form_path, tmp_path):
     result = run("fill", form_path, "-o", tmp_path / "out.pdf")
     assert result.exit_code != 0
@@ -209,6 +260,26 @@ def test_validate_passes_on_good_values(run, form_path, tmp_path):
     result = run("validate", form_path, "-d", data)
     assert result.exit_code == 0
     assert "validate against the derived schema" in result.output
+
+
+def test_validate_merges_several_data_files(run, form_path, tmp_path):
+    """The required Notes is only in the first file, the bad Colour only in the second."""
+    notes = tmp_path / "notes.json"
+    notes.write_text(json.dumps({"Notes": "x"}))
+    colour = tmp_path / "colour.json"
+    colour.write_text(json.dumps({"Colour": "Green"}))
+    result = run("validate", form_path, "-d", notes, "-d", colour)
+    assert result.exit_code == 1
+    assert "Colour:" in result.output
+    assert "Notes" not in result.output
+
+
+def test_validate_counts_the_fields_of_a_nested_file(run, form_path, tmp_path):
+    data = tmp_path / "values.json"
+    data.write_text(json.dumps({"Address": {"Street": "Hauptstr. 1", "City": "Berlin"}, "Notes": "x"}))
+    result = run("validate", form_path, "-d", data)
+    assert result.exit_code == 0
+    assert "3 value(s)" in result.output
 
 
 def test_validate_reports_problems_and_fails(run, form_path, tmp_path):

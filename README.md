@@ -48,6 +48,9 @@ pdfform fill form.pdf -d data.json -o filled.pdf
 # Or set a few fields directly
 pdfform fill form.pdf --set Name=Doe --set Agreed=true --set Colour=Blue -o filled.pdf
 
+# Merge several files; a later file overrides an earlier one field by field
+pdfform fill form.pdf -d defaults.json -d trip.json -o filled.pdf
+
 # Produce a non-editable document
 pdfform fill form.pdf -d data.json -o filled.pdf --flatten
 ```

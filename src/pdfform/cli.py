@@ -286,8 +286,10 @@ def _parse_stamps(stamps: tuple[str, ...]) -> dict[str, Path]:
 @click.option(
     "-d",
     "--data",
+    multiple=True,
     type=click.Path(dir_okay=False, allow_dash=True, path_type=Path),
-    help="JSON file with the field values. Use - to read from stdin.",
+    help="JSON file with the field values. Use - to read from stdin. Repeatable; a later file overrides "
+    "an earlier one field by field.",
 )
 @click.option("--set", "assignments", multiple=True, metavar="NAME=VALUE", help="Set one field. Repeatable.")
 @click.option("-o", "--output", type=OUT_OPT, required=True, help="Where to write the filled PDF.")
@@ -330,7 +332,7 @@ def _parse_stamps(stamps: tuple[str, ...]) -> dict[str, Path]:
 @_signing_options
 def fill(
     pdf: Path,
-    data: Path | None,
+    data: tuple[Path, ...],
     assignments: tuple[str, ...],
     output: Path,
     flatten: bool,
@@ -355,9 +357,11 @@ def fill(
     """Fill the form in PDF and write the result to --output.
 
     \b
-    Values come from a JSON file, from --set, or both; --set wins.
+    Values come from JSON files, from --set, or both. A later file overrides
+    an earlier one, and --set overrides all files.
       pdfform fill form.pdf --set Name=Doe --set Agreed=true -o out.pdf
       pdfform fill form.pdf -d values.json -o out.pdf
+      pdfform fill form.pdf -d defaults.json -d trip.json -o out.pdf
       cat values.json | pdfform fill form.pdf -d - -o out.pdf
 
     \b
@@ -367,12 +371,12 @@ def fill(
       pdfform fill form.pdf -d values.json --stamp Unterschrift=sig.png \\
           --sign --p12 me.p12 --sign-field Unterschrift -o out.pdf
     """
-    payload: dict[str, Any] = _load_values(data) if data is not None else {}
+    payload = _merge_values(data)
     for assignment in assignments:
         name, separator, value = assignment.partition("=")
         if not separator:
             raise click.ClickException(f"--set expects NAME=VALUE, got {assignment!r}")
-        payload[name] = _parse_scalar(value)
+        _assign(payload, name, _parse_scalar(value))
 
     stamp_images = _parse_stamps(stamps)
     signing_options = (sign_field, p12, key, cert, passphrase_file, reason, location, contact)
@@ -430,20 +434,24 @@ def _parse_scalar(text: str) -> Any:
     "-d",
     "--data",
     required=True,
+    multiple=True,
     type=click.Path(dir_okay=False, allow_dash=True, path_type=Path),
-    help="JSON file with the field values. Use - to read from stdin.",
+    help="JSON file with the field values. Use - to read from stdin. Repeatable; a later file overrides "
+    "an earlier one field by field.",
 )
-def validate(pdf: Path, data: Path) -> None:
-    """Check a values file against the schema derived from PDF.
+def validate(pdf: Path, data: tuple[Path, ...]) -> None:
+    """Check values files against the schema derived from PDF.
+
+    Several files are merged first, the same way `pdfform fill` merges them.
 
     Reports unknown field names, values outside an enum, strings over
     `maxLength` and missing required fields, then exits non-zero if anything is
     wrong. Filling is more permissive than this on purpose, so a clean run here
     is a stronger guarantee than a successful fill.
     """
-    payload = _load_values(data)
+    payload = _merge_values(data)
     schema = build_schema(extract_form(pdf))
-    problems = validate_values(schema, flatten_values(payload))
+    problems = validate_values(schema, payload)
     if not problems:
         click.echo(f"{len(payload)} value(s) validate against the derived schema.", err=True)
         return
@@ -452,14 +460,42 @@ def validate(pdf: Path, data: Path) -> None:
     raise click.exceptions.Exit(1)
 
 
+def _merge_values(sources: tuple[Path, ...]) -> dict[str, Any]:
+    """Merge the --data files in order, with flat field names as keys.
+
+    Flattening first makes the merge deep: a later ``{"Address": {"City": ...}}``
+    keeps an earlier ``Address.Street``.
+    """
+    if sum(str(source) == "-" for source in sources) > 1:
+        raise click.ClickException("--data can read stdin only once, so give - at most once.")
+    merged: dict[str, Any] = {}
+    for source in sources:
+        for name, value in flatten_values(_load_values(source)).items():
+            _assign(merged, name, value)
+    return merged
+
+
+def _assign(payload: dict[str, Any], name: str, value: Any) -> None:
+    """Set ``payload[name]`` and move it to the end.
+
+    `fill_form` applies the values in order, and a partial name such as
+    ``City`` fills the same field as ``Address.City``. The last assignment
+    therefore has to come last to win.
+    """
+    payload.pop(name, None)
+    payload[name] = value
+
+
 def _load_values(data: Path) -> dict[str, Any]:
-    raw = sys.stdin.read() if str(data) == "-" else data.read_text(encoding="utf-8")
+    stdin = str(data) == "-"
+    raw = sys.stdin.read() if stdin else data.read_text(encoding="utf-8")
+    where = "stdin" if stdin else str(data)
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise click.ClickException(f"Could not parse the values as JSON: {exc}") from exc
+        raise click.ClickException(f"Could not parse the values in {where} as JSON: {exc}") from exc
     if not isinstance(payload, dict):
-        raise click.ClickException("The values file must contain a JSON object.")
+        raise click.ClickException(f"The values in {where} must be a JSON object.")
     return payload
 
 
