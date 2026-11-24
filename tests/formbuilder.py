@@ -77,12 +77,15 @@ def _stream_ap(writer: PdfWriter) -> DictionaryObject:
     return appearance_dict
 
 
-#: The on-state ``Rückfahrt`` as Latin-1 bytes, and an ASCII placeholder of the
-#: same length. pypdf writes every name as UTF-8, so :func:`build_form` writes
-#: the placeholder and swaps in the Latin-1 bytes afterwards. The equal length
-#: keeps the cross-reference offsets valid.
 LATIN1_STATE = b"/R#FCckfahrt"
+"""The on-state ``Rückfahrt`` as Latin-1 bytes.
+
+pypdf writes every name as UTF-8, so :func:`build_form` writes
+:data:`_LATIN1_PLACEHOLDER` and swaps in these bytes afterwards.
+"""
+
 _LATIN1_PLACEHOLDER = "R@FCckfahrt"
+"""An ASCII stand-in for :data:`LATIN1_STATE` of the same length, which keeps the cross-reference offsets valid."""
 
 
 def build_form(*, xfa: str | None = None, xfa_fields: bool = True, lang: str | None = None) -> bytes:

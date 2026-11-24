@@ -25,22 +25,30 @@ from pdfform.model import FieldKind, FormField, FormInfo, Widget
 
 logger = logging.getLogger(__name__)
 
-#: Vertical tolerance, as a fraction of widget height, for "on the same line".
 _LINE_SLACK = 0.6
-#: How far above a widget a caption may sit, in points.
+"""Vertical tolerance, as a fraction of widget height, for "on the same line"."""
+
 _ABOVE_LIMIT = 26.0
-#: How far to the side a caption may sit, in points.
+"""How far above a widget a caption may sit, in points."""
+
 _SIDE_LIMIT = 320.0
-#: Rough width of one character as a fraction of the font size.
+"""How far to the side a caption may sit, in points."""
+
 _CHAR_WIDTH = 0.5
+"""Rough width of one character as a fraction of the font size."""
 
 _WHITESPACE = re.compile(r"\s+")
-#: Leaders and separators that carry no meaning in a caption.
+
 _TRIM = " \t\r\n:.…_-–—"
-#: Box and bullet glyphs. Forms that were built by dropping widgets onto a
-#: printed layout have these sitting right next to every check box, where they
-#: would otherwise win as the nearest text.
+"""Leaders and separators that carry no meaning in a caption."""
+
 _GLYPHS = "☐☒☑□■▪▫✓✔✗✘●○◯•·*x"
+"""Box and bullet glyphs.
+
+Forms that were built by dropping widgets onto a printed layout have these
+sitting right next to every check box, where they would otherwise win as the
+nearest text.
+"""
 
 
 @dataclass

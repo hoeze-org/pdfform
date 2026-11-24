@@ -35,8 +35,8 @@ FF_SORT = 1 << 19
 FF_MULTI_SELECT = 1 << 21
 FF_COMMIT_ON_SEL_CHANGE = 1 << 26
 
-#: The name of the "unchecked" appearance state, fixed by the PDF spec.
 OFF_STATE = "Off"
+"""The name of the "unchecked" appearance state, fixed by the PDF spec."""
 
 
 class FieldKind(str, Enum):

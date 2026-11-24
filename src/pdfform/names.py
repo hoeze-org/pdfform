@@ -25,9 +25,6 @@ from contextvars import ContextVar
 
 from pypdf.generic import NameObject
 
-#: The Windows code page that legacy producers write for a language. Keys are
-#: the primary subtag of ``/Lang`` in lower case, or the primary subtag with a
-#: script or region subtag where one language uses several code pages.
 CODE_PAGES: dict[str, str] = {
     **dict.fromkeys(("bs", "cs", "hr", "hu", "pl", "ro", "sk", "sl", "sq", "sr-latn"), "cp1250"),
     **dict.fromkeys(("az-cyrl", "be", "bg", "kk", "ky", "mk", "mn", "ru", "sr", "tt", "uk", "uz-cyrl"), "cp1251"),
@@ -43,9 +40,14 @@ CODE_PAGES: dict[str, str] = {
     **dict.fromkeys(("zh", "zh-hans"), "gbk"),
     **dict.fromkeys(("zh-hant", "zh-hk", "zh-mo", "zh-tw"), "cp950"),
 }
+"""The Windows code page that legacy producers write for a language.
 
-#: The code page for every other language, and for a document without ``/Lang``.
+Keys are the primary subtag of ``/Lang`` in lower case, or the primary subtag
+with a script or region subtag where one language uses several code pages.
+"""
+
 DEFAULT_CODE_PAGE = "cp1252"
+"""The code page for every other language, and for a document without ``/Lang``."""
 
 _chosen: ContextVar[tuple[str, ...] | None] = ContextVar("pdfform_name_charsets", default=None)
 

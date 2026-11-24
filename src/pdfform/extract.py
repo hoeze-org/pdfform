@@ -40,12 +40,14 @@ from pdfform.xfa import detect_xfa
 
 logger = logging.getLogger(__name__)
 
-#: Entries a child field inherits from its ancestors when it does not set them.
 INHERITABLE = ("/FT", "/Ff", "/V", "/DV", "/Opt", "/MaxLen", "/DA", "/Q")
+"""Entries a child field inherits from its ancestors when it does not set them."""
 
-#: ``/F`` annotation flag bits we care about (PDF 32000-1 table 165).
 ANNOT_HIDDEN = 1 << 1
+"""``/F`` annotation flag: do not show or print the annotation (PDF 32000-1 table 165)."""
+
 ANNOT_NOVIEW = 1 << 5
+"""``/F`` annotation flag: do not show the annotation on screen. It may still print (PDF 32000-1 table 165)."""
 
 PdfSource = "str | Path | bytes | PdfReader | PdfWriter"
 
