@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/hoeze-org/pdfform/compare/v0.4.0...v0.5.0) (2026-11-24)
+
+
+### Features
+
+* merge several --data files in order ([#20](https://github.com/hoeze-org/pdfform/issues/20)) ([93c044f](https://github.com/hoeze-org/pdfform/commit/93c044f06844129203f9d2f316bbeef8b80254b1))
+
+
+### Bug Fixes
+
+* let --set win over a partial field name in --data ([93c044f](https://github.com/hoeze-org/pdfform/commit/93c044f06844129203f9d2f316bbeef8b80254b1))
+
 ## [0.4.0](https://github.com/hoeze-org/pdfform/compare/v0.3.0...v0.4.0) (2026-11-24)
 
 
