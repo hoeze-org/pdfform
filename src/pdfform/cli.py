@@ -73,8 +73,9 @@ class _Group(click.Group):
     "charsets",
     metavar="CODECS",
     help=(
-        "Decode button states and other PDF names that are not UTF-8 with these Python codecs, "
+        "Decode PDF names that are not UTF-8, such as button states, with these Python codecs, "
         "comma-separated and tried in order, e.g. utf-8,cp1250. "
+        "pypdf also tries them for byte strings that are not UTF-16. "
         "Default: utf-8, then the code page for the document's /Lang, then latin1."
     ),
 )
@@ -488,10 +489,13 @@ def strip_xfa_command(pdf: Path, output: Path) -> None:
 @click.argument("pdf", type=PDF_ARG)
 @click.option("-o", "--output", type=OUT_OPT, required=True, help="Where to write the result.")
 def normalize_command(pdf: Path, output: Path) -> None:
-    """Rewrite PDF with every name in UTF-8, for example before merging PDFs.
+    """Rewrite the names in PDF as UTF-8, for example before merging PDFs.
 
     Names that are not UTF-8 are decoded with the code page for the document's
-    /Lang, or with --name-charsets. Nothing else changes.
+    /Lang, or with --name-charsets. Only names in object dictionaries change.
+    Names inside content streams keep their bytes, so a resource name that is
+    not UTF-8 no longer matches its use on the page. The output is not
+    encrypted, and any signature in it breaks.
     """
     normalize_names(pdf, output)
     click.echo(f"Wrote {output}", err=True)

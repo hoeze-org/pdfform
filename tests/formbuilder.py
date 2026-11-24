@@ -4,13 +4,16 @@ Building the forms by hand rather than with a generator library is deliberate:
 the interesting cases are exactly the ones a friendly generator smooths over -
 a check box whose on-state is ``/Ja``, a radio group whose kids each have a
 different on-state, a text field whose ``/AP /N`` is a stream and not a state
-dictionary, hierarchical field names, and a radio state stored as Latin-1
-bytes rather than UTF-8.
+dictionary, hierarchical field names, a radio state stored as Latin-1 bytes
+rather than UTF-8, and, on request, an object stream that holds the catalog and
+the fields.
 """
 
 from __future__ import annotations
 
 import io
+import re
+import struct
 from typing import Any
 
 from pypdf import PdfReader, PdfWriter
@@ -88,7 +91,9 @@ _LATIN1_PLACEHOLDER = "R@FCckfahrt"
 """An ASCII stand-in for :data:`LATIN1_STATE` of the same length, which keeps the cross-reference offsets valid."""
 
 
-def build_form(*, xfa: str | None = None, xfa_fields: bool = True, lang: str | None = None) -> bytes:
+def build_form(
+    *, xfa: str | None = None, xfa_fields: bool = True, lang: str | None = None, objstm: bool = False
+) -> bytes:
     """Build the reference form used by most tests.
 
     Args:
@@ -96,6 +101,9 @@ def build_form(*, xfa: str | None = None, xfa_fields: bool = True, lang: str | N
             an XFA packet. A dynamic form also gets an empty ``/Fields`` array.
         xfa_fields: Kept for readability at the call site; ignored.
         lang: The ``/Lang`` entry of the catalog. ``None`` leaves it out.
+        objstm: Pack every object except the streams into one object stream,
+            as many PDF 1.5 writers do. A reader then parses the catalog, the
+            fields and the widgets together.
     """
     writer = PdfWriter()
     writer.add_blank_page(width=595, height=842)
@@ -273,7 +281,59 @@ def build_form(*, xfa: str | None = None, xfa_fields: bool = True, lang: str | N
     placeholder = f"/{_LATIN1_PLACEHOLDER}".encode()
     data = buffer.getvalue()
     assert data.count(placeholder) == 1, "the placeholder must be written exactly once, unescaped"
-    return data.replace(placeholder, LATIN1_STATE)
+    data = data.replace(placeholder, LATIN1_STATE)
+    return _pack_object_stream(data) if objstm else data
+
+
+def _pack_object_stream(data: bytes) -> bytes:
+    """Move every object of a pypdf-written PDF except the streams into one object stream.
+
+    pypdf never writes object streams. This works on the raw bytes, so every
+    name keeps the bytes it was written with, and it adds a cross-reference
+    stream, which object streams need.
+    """
+    objects = {int(n): body for n, body in re.findall(rb"(?ms)^(\d+) 0 obj\n(.*?)\nendobj\n", data)}
+    trailer = data[data.rindex(b"trailer") :]
+    refs = b"".join(m.group(0) + b" " for m in re.finditer(rb"/(?:Root|Info) \d+ 0 R", trailer))
+    packed = [n for n, body in objects.items() if b"\nstream\n" not in body]
+    stm = max(objects) + 1
+    xref = stm + 1
+    entries: dict[int, tuple[int, int, int]] = {0: (0, 0, 65535)}
+
+    out = bytearray(b"%PDF-1.7\n%\xe2\xe3\xcf\xd3\n")
+    for n, body in objects.items():
+        if n not in packed:
+            entries[n] = (1, len(out), 0)
+            out += b"%d 0 obj\n%s\nendobj\n" % (n, body)
+
+    offsets = bodies = b""
+    for index, n in enumerate(packed):
+        offsets += b"%d %d " % (n, len(bodies))
+        bodies += objects[n] + b"\n"
+        entries[n] = (2, stm, index)
+    content = offsets + bodies
+    entries[stm] = (1, len(out), 0)
+    out += b"%d 0 obj\n<< /Type /ObjStm /N %d /First %d /Length %d >>\nstream\n" % (
+        stm,
+        len(packed),
+        len(offsets),
+        len(content),
+    )
+    out += content + b"\nendstream\nendobj\n"
+
+    entries[xref] = (1, len(out), 0)
+    rows = b"".join(
+        bytes([kind]) + struct.pack(">IH", first, second)
+        for kind, first, second in (entries.get(n, (0, 0, 0)) for n in range(xref + 1))
+    )
+    out += b"%d 0 obj\n<< /Type /XRef /Size %d /W [1 4 2] %s/Length %d >>\nstream\n" % (
+        xref,
+        xref + 1,
+        refs,
+        len(rows),
+    )
+    out += rows + b"\nendstream\nendobj\nstartxref\n%d\n%%%%EOF\n" % entries[xref][1]
+    return bytes(out)
 
 
 def read(data: bytes) -> PdfReader:

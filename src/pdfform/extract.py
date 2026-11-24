@@ -57,9 +57,12 @@ def open_pdf(source: Any) -> PdfReader | PdfWriter:
     if isinstance(source, (PdfReader, PdfWriter)):
         return source
     if isinstance(source, (bytes, bytearray)):
-        reader = PdfReader(io.BytesIO(bytes(source)))
-    else:
-        reader = PdfReader(str(source))
+        return _read(io.BytesIO(bytes(source)))
+    return _read(str(source))
+
+
+def _read(stream: Any) -> PdfReader:
+    reader = PdfReader(stream)
     if reader.is_encrypted:
         # Many public forms are "encrypted" only to set permission bits and open
         # fine with an empty user password.
@@ -100,21 +103,42 @@ def get_acroform(doc: PdfReader | PdfWriter) -> DictionaryObject | None:
 _acroform = get_acroform
 
 
+def _peek_lang(source: Any) -> str | None:
+    """Return the ``/Lang`` of *source*, read through a reader of its own.
+
+    pypdf parses a whole object stream when it needs one object from it. Read
+    through the reader that the call uses, the catalog would bring along every
+    name stored next to it, decoded before the charsets are set.
+    """
+    try:
+        if isinstance(source, PdfWriter):
+            doc: PdfReader | PdfWriter = source  # a writer holds decoded objects only
+        else:
+            doc = _read(source.stream) if isinstance(source, PdfReader) else open_pdf(source)
+        lang = doc.root_object.get("/Lang")
+    except Exception as exc:  # only a hint: opening the document for real reports a broken file
+        logger.debug("Could not read /Lang: %s", exc)
+        return None
+    return str(lang) if lang is not None else None
+
+
 def decodes_names[**P, R](func: Callable[P, R]) -> Callable[P, R]:
     """Run *func* with the name charsets for its ``source`` document.
 
     Those are the charsets of an active :func:`~pdfform.names.name_charsets`,
     or else the ones for the document's ``/Lang``. The wrapper opens ``source``
-    and passes the open document on, so *func* reads it under those charsets.
+    inside that scope and passes the open document on, so *func* reads it under
+    those charsets. A reader that the caller opened keeps the decoding of the
+    objects it has read already.
     """
     signature = inspect.signature(func)
 
     @functools.wraps(func)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         bound = signature.bind(*args, **kwargs)
-        doc = bound.arguments["source"] = open_pdf(bound.arguments["source"])
-        lang = _catalog(doc).get("/Lang")
-        with decoding_names(str(lang) if lang is not None else None):
+        source = bound.arguments["source"]
+        with decoding_names(lambda: _peek_lang(source)):
+            bound.arguments["source"] = open_pdf(source)
             return cast(Any, func)(*bound.args, **bound.kwargs)
 
     return wrapper

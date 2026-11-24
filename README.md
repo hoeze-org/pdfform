@@ -69,7 +69,7 @@ pdfform validate form.pdf -d data.json
 pdfform fill form.pdf -d data.json -o filled.pdf --validate   # refuses to write on a mismatch
 ```
 
-Other commands: `pdfform stamp` and `pdfform sign`, described below, `pdfform strip-xfa` removes an XFA layer, `pdfform normalize` rewrites every name as UTF-8, `pdfform xfa` lists or dumps the XFA packets. `pdfform --help` covers the rest.
+Other commands: `pdfform stamp` and `pdfform sign`, described below, `pdfform strip-xfa` removes an XFA layer, `pdfform normalize` rewrites the names in a file as UTF-8, `pdfform xfa` lists or dumps the XFA packets. `pdfform --help` covers the rest.
 
 ## Library
 
@@ -131,7 +131,7 @@ These are the reasons this tool exists rather than a forty-line script.
 
 **A button value is a name, not a string.** Written as a text string it is silently ignored.
 
-**A button state has no encoding.** An on-state is a PDF name, and a name is a byte sequence. The spec only recommends UTF-8, and some forms store "Rückfahrt" as Latin-1, `/R#fcckfahrt`. pypdf tries GBK before Latin-1 and reads that as `R點kfahrt`. `pdfform` tries UTF-8, then the Windows code page for the document's `/Lang`, then Latin-1. A document without `/Lang` gets cp1252. If the states still look garbled, name the codecs yourself: `pdfform --name-charsets utf-8,cp1250 fill ...`, or `with pdfform.name_charsets("utf-8", "cp1250"):` in Python. Every command but `sign` rewrites the whole file and stores its names as UTF-8, so other tools read them correctly too. `sign` appends to the file and keeps the original bytes. `pdfform normalize in.pdf -o out.pdf` does only that conversion. Run it on each file before merging files whose names use different encodings, because one merged file has only one `/Lang`.
+**A button state has no encoding.** An on-state is a PDF name, and a name is a byte sequence. The spec only recommends UTF-8, and some forms store "Rückfahrt" as Latin-1, `/R#fcckfahrt`. pypdf tries GBK before Latin-1 and reads that as `R點kfahrt`. `pdfform` tries UTF-8, then the Windows code page for the document's `/Lang`, then Latin-1. A document without `/Lang` gets cp1252. If the states still look garbled, name the codecs yourself. A Chinese form without `/Lang`, for example, needs `pdfform --name-charsets utf-8,gbk,latin1 fill ...`, or `with pdfform.name_charsets("utf-8", "gbk", "latin1"):` in Python. Every command that writes a PDF, except `sign`, rewrites the whole file and stores the names in its object dictionaries as UTF-8, so other tools read them correctly too. `sign` appends to the file and keeps the original bytes. `pdfform normalize in.pdf -o out.pdf` does only that conversion. Run it on each file before merging files whose names use different encodings, because one merged file has only one `/Lang`. Names inside content streams keep their bytes, so a font or image name that is not UTF-8 stops matching its use on the page.
 
 **Appearance streams.** Without regenerating appearances, Acrobat may show a value that Preview, Chrome's viewer or a printer does not. `pdfform` both generates appearance streams for text and choice fields and sets `/NeedAppearances`, since neither is reliable alone.
 

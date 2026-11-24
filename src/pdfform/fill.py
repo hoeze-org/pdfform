@@ -366,12 +366,16 @@ def strip_xfa_layer(source: Any, output: Any = None) -> bytes:
 
 @decodes_names
 def normalize_names(source: Any, output: Any = None) -> bytes:
-    """Rewrite a document with every name in UTF-8, and return it as bytes.
+    """Rewrite the names of a document as UTF-8, and return the document as bytes.
 
     Names that are not UTF-8 are decoded as for every other call, see
     :mod:`pdfform.names`. Run this on each file before merging files whose
-    names use different encodings. The content stays the same, but the file
-    is written anew, which breaks any signature in it.
+    names use different encodings.
+
+    pypdf rewrites the names in object dictionaries. Names inside content
+    streams keep their bytes, so a resource name that is not UTF-8 no longer
+    matches its use in the page content. The document is written anew: it
+    comes out unencrypted, and any signature in it breaks.
     """
     writer = PdfWriter(clone_from=open_reader(source))
     signed = _signed_fields(extract_form_and_objects(writer)[0])

@@ -12,14 +12,19 @@ before an ASCII letter turns into a Chinese character. pdfform instead tries
 UTF-8, then the Windows code page for the document's ``/Lang``, then Latin-1,
 which decodes any byte. :func:`name_charsets` replaces that guess.
 
-The guess never breaks a form. pypdf writes every name back as UTF-8, so a
-button's ``/AS`` and the ``/AP`` key it selects keep matching bytes.
+The guess does not break the buttons. pypdf writes every name in an object
+dictionary back as UTF-8, so a button's ``/AS`` and the ``/AP`` key it selects
+keep matching bytes. Names inside content streams keep their bytes.
+
+pypdf also tries ``NameObject.CHARSETS`` for a byte string that is not UTF-16,
+so the charsets apply to such strings too.
 """
 
 from __future__ import annotations
 
 import codecs
-from collections.abc import Iterator
+import threading
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 
@@ -27,7 +32,9 @@ from pypdf.generic import NameObject
 
 CODE_PAGES: dict[str, str] = {
     **dict.fromkeys(("bs", "cs", "hr", "hu", "pl", "ro", "sk", "sl", "sq", "sr-latn"), "cp1250"),
-    **dict.fromkeys(("az-cyrl", "be", "bg", "kk", "ky", "mk", "mn", "ru", "sr", "tt", "uk", "uz-cyrl"), "cp1251"),
+    **dict.fromkeys(
+        ("az-cyrl", "be", "bg", "bs-cyrl", "kk", "ky", "mk", "mn", "ru", "sr", "tt", "uk", "uz-cyrl"), "cp1251"
+    ),
     "el": "cp1253",
     **dict.fromkeys(("az", "tr", "uz"), "cp1254"),
     "he": "cp1255",
@@ -51,6 +58,9 @@ DEFAULT_CODE_PAGE = "cp1252"
 
 _chosen: ContextVar[tuple[str, ...] | None] = ContextVar("pdfform_name_charsets", default=None)
 
+_lock = threading.RLock()
+"""Held while ``NameObject.CHARSETS`` is changed. Reentrant, because pdfform calls nest."""
+
 
 def code_page(lang: str | None) -> str:
     """Return the Windows code page for a ``/Lang`` tag such as ``de-DE`` or ``zh-Hant-TW``."""
@@ -71,8 +81,8 @@ def lang_charsets(lang: str | None) -> tuple[str, ...]:
 def name_charsets(*charsets: str) -> Iterator[None]:
     """Decode names with *charsets*, tried in order, instead of guessing from ``/Lang``.
 
-    This applies to every pdfform call in the ``with`` block that runs in the
-    current thread::
+    This applies to every pdfform call in the ``with`` block. Calls in other
+    threads keep their own charsets::
 
         with name_charsets("utf-8", "cp1250"):
             info = extract_form("form.pdf")
@@ -95,17 +105,24 @@ def name_charsets(*charsets: str) -> Iterator[None]:
 
 
 @contextmanager
-def decoding_names(lang: str | None) -> Iterator[None]:
+def decoding_names(lang: Callable[[], str | None]) -> Iterator[None]:
     """Set ``NameObject.CHARSETS`` for one pdfform call, and restore it afterwards.
+
+    *lang* returns the document's ``/Lang``. It is only called when no
+    :func:`name_charsets` block is active.
 
     pypdf reads an object when it is first used, so the block must span the
     whole call, not only the opening of the file. ``NameObject.CHARSETS`` is a
-    class attribute, so other threads see the change while the block runs.
+    class attribute, so the block holds a lock: pdfform calls in other threads
+    wait until it ends. Other code that uses pypdf in another thread still sees
+    the changed charsets while the block runs.
     """
-    previous = NameObject.CHARSETS
-    # pypdf's annotation is the type of its default, a tuple of exactly three
-    NameObject.CHARSETS = _chosen.get() or lang_charsets(lang)  # type: ignore[assignment]
-    try:
-        yield
-    finally:
-        NameObject.CHARSETS = previous
+    with _lock:
+        charsets = _chosen.get() or lang_charsets(lang())
+        previous = NameObject.CHARSETS
+        # pypdf's annotation is the type of its default, a tuple of exactly three
+        NameObject.CHARSETS = charsets  # type: ignore[assignment]
+        try:
+            yield
+        finally:
+            NameObject.CHARSETS = previous
